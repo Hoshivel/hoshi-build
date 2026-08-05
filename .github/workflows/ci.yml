@@ -1,0 +1,45 @@
+# 主分支的驗證。
+#
+# 這裡**不寫** `go build` 的旗標。建置規範 §3 規定倉庫不得在文件或 CI 裡重寫它們，
+# 而本倉庫正是那條規則的執法者——CI 自己打一行 `CGO_ENABLED=0 go build …`
+# 就是多出一份沒有測試盯著的副本，而它漂移的那天沒有人會發現。
+# 因此一律自舉：呼叫 `hoshi` 自己，旗標的正本留在 internal/build/gobuild.go。
+name: CI
+
+# 只在 main 跑。工作分支的頻繁推送是雲端會話的持久化手段，不該產生 CI 成本；
+# 手動觸發不隨推送發生，所以留著。
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          # 版本跟著 go.mod 走，不在這裡再釘一次——兩個地方寫同一個版本號，
+          # 遲早只有一個會被更新。
+          go-version-file: go.mod
+
+      # 自舉其一：本工具測試它自己。
+      # gofmt -l → go vet → go build → go test -race，第一個失敗就停。
+      - name: hoshi test
+        run: go run ./cmd/hoshi test
+
+      # internal/dev 有平臺相依的檔案（proc_unix.go / proc_windows.go），兩邊都要
+      # 編得過。這是編譯檢查、不產出任何要部署的東西，因此不是 §3 說的那種
+      # 「在 CI 裡重寫建置旗標」。
+      - name: 交叉編譯檢查（windows）
+        run: GOOS=windows go build ./...
+
+      # 自舉其二：本工具建置它自己。`.hoshi-build.yaml` 是本倉庫自己的設定，
+      # 它壞掉時最先發現的應該是本倉庫的維護者。
+      - name: hoshi build
+        run: go run ./cmd/hoshi build

@@ -1,0 +1,57 @@
+# 推 `v*` tag 時，建出各平臺的單檔二進位並附到 GitHub release。
+#
+# **產物名稱不在這裡決定。** 建置規範 §2.2（硬性）規定它是 `<name>-<os>-<arch>`，
+# 而那正是 `hoshi build` 本來就會產出的名字，所以這裡直接上傳 `dist/` 底下的東西。
+# 在工作流程裡自己拼一次檔名，等於把命名規則複製到一個沒有測試盯著的地方。
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write # 建立 release 並上傳產物
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # 版本字串來自 `git describe --tags`。預設的 fetch-depth: 1 取不到 tag，
+          # 版本會安靜地退成 `dev`，而唯一發現的時機是有人對釋出的產物打
+          # `hoshi version`——那時它已經在別人的機器上了。
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+
+      # 先驗再釋出：沒跑過測試的產物不該掛上 release 頁面。
+      - name: hoshi test
+        run: go run ./cmd/hoshi test
+
+      # 每個目標都是**單一檔**：hoshi 是 `type: go` 且沒有 `include`，
+      # 沒有隨附內容就不該有目錄（部署標準 §1.1〈可單檔部署〉）。
+      # linux 的 ELF 產物會在建置當下驗 PT_INTERP；darwin / windows 明講
+      # 「未檢查」，不假裝綠燈。
+      - name: hoshi build
+        run: >
+          go run ./cmd/hoshi build
+          -target linux/amd64,linux/arm64,darwin/amd64,darwin/arm64,windows/amd64
+
+      - name: 建立 release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # 帶後綴的 tag（v1.2.0-rc1）是預發行版，不該成為 latest——
+          # 「下載 latest」的人拿到一個 RC，是那種不會有人回報的錯。
+          case "$GITHUB_REF_NAME" in
+            *-*) prerelease=(--prerelease) ;;
+            *)   prerelease=() ;;
+          esac
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            "${prerelease[@]}"
