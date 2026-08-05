@@ -1,4 +1,9 @@
-# 推 `v*` tag 時，建出各平臺的單檔二進位並附到 GitHub release。
+# 發佈 release 時，建出各平臺的單檔二進位並附上去。
+#
+# **觸發的是「發佈 release」，不是「推 tag」。** 只要走 release 發版就該建置——
+# 不管版本號長什麼樣、是不是 rc。`published` 對正式版與預發行版都會觸發，
+# 所以這裡不篩 tag 名，也不需要判斷 prerelease：那是發版的人在 UI 上決定的事，
+# 與「要不要建置」無關。
 #
 # **產物名稱不在這裡決定。** 建置規範 §2.2（硬性）規定它是 `<name>-<os>-<arch>`，
 # 而那正是 `hoshi build` 本來就會產出的名字，所以這裡直接上傳 `dist/` 底下的東西。
@@ -6,12 +11,11 @@
 name: Release
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published]
 
 permissions:
-  contents: write # 建立 release 並上傳產物
+  contents: write # 上傳產物到 release
 
 jobs:
   release:
@@ -19,7 +23,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          # 版本字串來自 `git describe --tags`。預設的 fetch-depth: 1 取不到 tag，
+          # 明講要建的是這個 release 的 tag，不要靠預設值推。
+          ref: ${{ github.event.release.tag_name }}
+          # 版本字串來自 `git describe --tags`。預設的淺 clone 取不到 tag，
           # 版本會安靜地退成 `dev`，而唯一發現的時機是有人對釋出的產物打
           # `hoshi version`——那時它已經在別人的機器上了。
           fetch-depth: 0
@@ -41,17 +47,11 @@ jobs:
           go run ./cmd/hoshi build
           -target linux/amd64,linux/arm64,darwin/amd64,darwin/arm64,windows/amd64
 
-      - name: 建立 release
+      # release 必然已經存在——它的發佈就是觸發本次執行的那件事——所以這裡只上傳，
+      # 不建立，也不碰標題與說明：那些是發版的人寫的。
+      # `--clobber` 讓重跑這一步是冪等的。
+      - name: 上傳產物
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          # 帶後綴的 tag（v1.2.0-rc1）是預發行版，不該成為 latest——
-          # 「下載 latest」的人拿到一個 RC，是那種不會有人回報的錯。
-          case "$GITHUB_REF_NAME" in
-            *-*) prerelease=(--prerelease) ;;
-            *)   prerelease=() ;;
-          esac
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes \
-            "${prerelease[@]}"
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" dist/* --clobber

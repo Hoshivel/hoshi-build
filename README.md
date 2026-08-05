@@ -121,10 +121,11 @@ sudo install -m 0755 hoshi-linux-amd64 /usr/local/bin/hoshi
 hoshi version
 ```
 
-每推一個 `v*` tag，CI 就建出上列各平臺的產物附到 release，見
-[`.github/workflows/release.yml`](.github/workflows/release.yml)。檔名是
-`hoshi-<os>-<arch>`——和 `hoshi` 為其他倉庫產出的名字**同一條規則**（建置規範 §2.2），
-因為它就是同一段程式碼產的。
+每發佈一個 release，CI 就建出上列各平臺的產物附上去，見
+[`.github/workflows/release.yml`](.github/workflows/release.yml)。**發版的動作是
+「發佈 release」**，不是「推 tag」——不管版本號長什麼樣、是不是 rc，一律建置。
+檔名是 `hoshi-<os>-<arch>`——和 `hoshi` 為其他倉庫產出的名字**同一條規則**
+（建置規範 §2.2），因為它就是同一段程式碼產的。
 
 ### 從原始碼建置
 
