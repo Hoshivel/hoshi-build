@@ -109,6 +109,27 @@ backend  │ GET /api/me 200
 
 ## 安裝
 
+### 推薦：下載二進位
+
+**`hoshi` 自己也遵守部署標準**——它是一個靜態連結的單檔執行檔，複製到機器上就能跑，
+不需要 Go 工具鏈，也不需要這份原始碼。
+
+```sh
+# 平臺：linux-amd64 / linux-arm64 / darwin-amd64 / darwin-arm64 / windows-amd64.exe
+curl -fsSLO https://github.com/Hoshivel/hoshi-build/releases/latest/download/hoshi-linux-amd64
+sudo install -m 0755 hoshi-linux-amd64 /usr/local/bin/hoshi
+hoshi version
+```
+
+每推一個 `v*` tag，CI 就建出上列各平臺的產物附到 release，見
+[`.github/workflows/release.yml`](.github/workflows/release.yml)。檔名是
+`hoshi-<os>-<arch>`——和 `hoshi` 為其他倉庫產出的名字**同一條規則**（建置規範 §2.2），
+因為它就是同一段程式碼產的。
+
+### 從原始碼建置
+
+沒有合用的 release、或要驗證某個 commit 時：
+
 ```sh
 git clone https://github.com/Hoshivel/hoshi-build.git
 cd hoshi-build
@@ -117,6 +138,11 @@ sudo install -m 0755 hoshi /usr/local/bin/
 ```
 
 之後可以用它自己升級：`hoshi build && sudo install -m 0755 dist/hoshi-* /usr/local/bin/hoshi`。
+
+> **註**：這一步是**自舉**，所以它是本倉庫唯一手打 `go build` 的地方——
+> 還沒有 `hoshi` 的時候沒有別的辦法。它刻意不帶部署標準的那組旗標：那組旗標的正本
+> 在 `internal/build/gobuild.go`，在這裡抄一份就是多一份會漂移的副本。
+> 用這個方式裝出來的 `hoshi` 拿來跑 `hoshi build` 產出的，才是合規的產物。
 
 ## 什麼不進這個倉庫
 
