@@ -1,0 +1,9 @@
+# hoshi 自己的設定。它建置自己，所以這份檔同時是範例與煙霧測試——
+# 壞掉時最先發現的應該是本倉庫的維護者。
+name: hoshi
+type: go
+output: dist/
+
+go:
+  package: ./cmd/hoshi
+  version_var: main.version
