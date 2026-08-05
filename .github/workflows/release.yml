@@ -45,13 +45,30 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          # 帶後綴的 tag（v1.2.0-rc1）是預發行版，不該成為 latest——
-          # 「下載 latest」的人拿到一個 RC，是那種不會有人回報的錯。
-          case "$GITHUB_REF_NAME" in
-            *-*) prerelease=(--prerelease) ;;
-            *)   prerelease=() ;;
-          esac
-          gh release create "$GITHUB_REF_NAME" dist/* \
-            --title "$GITHUB_REF_NAME" \
-            --generate-notes \
-            "${prerelease[@]}"
+          # 有兩種發版方式，兩種都得走得通：
+          #
+          #   1. `git push origin v1.2.3`——tag 先到，release 由這裡建立。
+          #   2. 從 GitHub UI 按「Publish release」——**它會順手建立 tag**，
+          #      於是這個工作流程被那個動作觸發時，release 已經先存在了。
+          #
+          # 第 2 種在 v0.1.0 上真的發生過：`gh release create` 撞上「同名 release
+          # 已存在」而整個 job 紅燈，留下一個**沒有任何產物的** release——
+          # 而 README 正教人從那裡下載。
+          #
+          # 已存在就只補產物，**不碰**人家寫好的標題、說明與 prerelease 旗標：
+          # 從 UI 發版的人已經決定過那些了。--clobber 讓重跑這一步是冪等的。
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            echo "release $GITHUB_REF_NAME 已存在（多半是從 UI 發的），只上傳產物"
+            gh release upload "$GITHUB_REF_NAME" dist/* --clobber
+          else
+            # 帶後綴的 tag（v1.2.0-rc1）是預發行版，不該成為 latest——
+            # 「下載 latest」的人拿到一個 RC，是那種不會有人回報的錯。
+            case "$GITHUB_REF_NAME" in
+              *-*) prerelease=(--prerelease) ;;
+              *)   prerelease=() ;;
+            esac
+            gh release create "$GITHUB_REF_NAME" dist/* \
+              --title "$GITHUB_REF_NAME" \
+              --generate-notes \
+              "${prerelease[@]}"
+          fi
