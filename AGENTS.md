@@ -4,21 +4,24 @@
 
 > **代理執行規範的正本不在這裡**，在
 > [workspace](https://github.com/Hoshivel/workspace) 的 `AGENTS.md`：
-> 會話日誌、中斷復原流程、跨倉庫協作流程、分支與 PR 規則全在那裡。
+> 四層記錄（焦點／todo／logs／decisions）、中斷復原流程、跨倉庫協作流程、
+> 分支與 PR 規則全在那裡。
 > 本檔只補上**這個倉庫自己的**東西。
 
 ## 0. 開工前
 
-**先取得 workspace，並讀它的 `AGENTS.md`。**
+**先取得 workspace，讀它的 `focus.md` 與 `AGENTS.md`。**
 
 ```sh
-ls ../workspace/sessions/                                          # 本機：就在旁邊
+cat ../workspace/focus.md                                          # 本機：就在旁邊
 git clone https://github.com/Hoshivel/workspace.git ../workspace   # 雲端：自己補上
 ```
 
-- 取不到就**停下來告訴使用者**，不要退回在本倉庫自建 `sessions/`。
-- **本倉庫沒有 `sessions/`，也不得新增。** 會話日誌的正本在 `workspace/sessions/`。
-- 續接既有任務時**沿用日誌記的分支與 PR**，不要另開新分支
+- 取不到就**停下來告訴使用者**，不要退回在本倉庫自建 `TODO.md` 或工作記錄。
+- **本倉庫的待辦在 `workspace/todo/hoshi-build/`**，工作日誌在 `workspace/logs/hoshi-build/`。
+  **不得**自建 `TODO.md`／`logs/`，也不得記錄領取、分支或 `Status: Editing`
+  （workspace `AGENTS.md` §4.4、§5）。
+- 續接既有任務時**沿用該事項記的分支與 PR**，不要另開新分支
   （workspace `AGENTS.md` §4.3）。
 
 ## 1. 入場閱讀順序
@@ -31,7 +34,7 @@ git clone https://github.com/Hoshivel/workspace.git ../workspace   # 雲端：�
 
 ## 2. 驗證
 
-改碼後執行；綠燈再把會話日誌的 `Editing` 設回 `idle`：
+改碼後執行；綠燈再更新該事項的 `Status:`（`Editing` → `待驗證`）：
 
 ```sh
 go build ./... && go vet ./... && gofmt -l . && go test -race ./...
@@ -73,12 +76,12 @@ GOOS=windows go build ./...  # dev 有平臺相依的檔案，兩邊都要編得
   **不要**改回「開新視窗／背景程序 ＋ 下次啟動先殺掉占埠的行程」：
   那一整類問題正是因為行程脫離了啟動它的指令才存在。
 - **改動設定鍵位是跨倉庫的破壞性變更**。每個使用本工具的倉庫都有 `.hoshi-build.*`，
-  改鍵名要全部一起改，順序寫進 workspace 的會話日誌。**規範先改**（組織的建置
+  改鍵名要全部一起改，順序寫進 `workspace/todo/` 的該事項裡。**規範先改**（組織的建置
   規範），再改本倉庫，最後才各倉庫。
 - **平臺規範的位置**：**被 import 的**進共用 SDK，**被遵守的**進規範倉庫，
-  **會過期的**（會話、目標、代理規範）進
+  **會過期的**（待辦、工作日誌、代理規範）進
   [workspace](https://github.com/Hoshivel/workspace)。本工具**不引用**共用 SDK：
   建置工具不該和被建置的服務共用執行期程式碼。
 - 文件與註解沿用倉庫既有風格：**正體中文為主**（程式碼註解英文），
   規範關鍵字（必須／不得／應／不宜／可）依 RFC 2119 使用，理由寫進 `> **註**` 區塊。
-  狀態關鍵字（`Editing` / `editing` / `idle`）保持原樣以利機器辨識。
+  狀態關鍵字（`Status:` 的那幾個值）保持原樣以利機器辨識。
