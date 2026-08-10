@@ -188,6 +188,14 @@ func runProcess(ctx context.Context, c *config.Config, p *ui.Printer, proc confi
 	}
 
 	if err := cmd.Start(); err != nil {
+		// The first process to end cancels ctx for everybody, and a process
+		// still waiting to be started then fails with context.Canceled. That is
+		// the teardown arriving, not a broken command line — reporting it would
+		// name a bystander as the reason the session ended, and hide the process
+		// that actually finished. Same reasoning as the ctx check after Wait.
+		if ctx.Err() != nil {
+			return nil // torn down before it got going
+		}
 		return fmt.Errorf("%s 啟動失敗：%w", proc.Name, err)
 	}
 	p.OK("%s 已啟動（PID %d）", proc.Name, cmd.Process.Pid)

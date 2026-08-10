@@ -47,6 +47,12 @@ func requireUnix(t *testing.T) {
 
 // Two processes run at once and both their outputs reach the terminal, tagged.
 // Interleaving is the entire reason this replaces separate windows.
+//
+// Each one waits for the other's marker before exiting. Without that barrier
+// the test asserts something Run does not promise: the first process to end
+// cancels the rest, so a plain `echo` in each raced its own teardown and this
+// test failed roughly one run in twelve under load — an intermittent red light,
+// which is worse than a steady one because it trains people to ignore it.
 func TestRunsEveryProcessAndPrefixesOutput(t *testing.T) {
 	requireUnix(t)
 	c := repo(t, `
@@ -55,9 +61,9 @@ type: go
 dev:
   processes:
     - name: alpha
-      run: [sh, -c, "echo hello-from-alpha"]
+      run: [sh, -c, "echo hello-from-alpha; touch alpha.up; i=0; while [ ! -f beta.up ] && [ $i -lt 400 ]; do sleep 0.05; i=$((i+1)); done"]
     - name: beta
-      run: [sh, -c, "echo hello-from-beta"]
+      run: [sh, -c, "echo hello-from-beta; touch beta.up; i=0; while [ ! -f alpha.up ] && [ $i -lt 400 ]; do sleep 0.05; i=$((i+1)); done"]
 `, nil)
 
 	var out bytes.Buffer
@@ -117,9 +123,32 @@ dev:
 	}()
 
 	select {
-	case <-done:
+	case err := <-done:
+		// quick ended cleanly and forever was torn down on purpose, so there is
+		// nothing to report. Anything here would be the teardown wearing the
+		// costume of a failure.
+		if err != nil {
+			t.Fatalf("收掉其餘行程不該變成錯誤：%v", err)
+		}
 	case <-time.After(20 * time.Second):
 		t.Fatal("一個行程結束之後，其餘的沒有被收掉")
+	}
+}
+
+// The teardown can arrive before a process has even been started, and then
+// exec's own error is context.Canceled. Reporting that would name a bystander
+// as the reason the session ended.
+func TestStartAfterTeardownIsNotAFailure(t *testing.T) {
+	requireUnix(t)
+	c := repo(t, "name: demo\ntype: go\n", nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	proc := config.Process{Name: "late", Dir: ".", Run: config.CmdLine{"sh", "-c", "exit 0"}}
+	err := runProcess(ctx, c, ui.New(&bytes.Buffer{}, &bytes.Buffer{}, false), proc, 0)
+	if err != nil {
+		t.Fatalf("被收掉的行程不該回報啟動失敗：%v", err)
 	}
 }
 
