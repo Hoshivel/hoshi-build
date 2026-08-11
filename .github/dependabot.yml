@@ -6,11 +6,31 @@
 # ——上游改了 tag 指向就換掉了我們跑的程式，沒有任何審閱——這裡把那件事換成
 # 一個看得見、審得到的 PR。
 #
-# **PR 是草稿以外的形狀由 workspace `AGENTS.md` §1.9 管**：Dependabot 開的是
-# 正式 PR，所以它會跑 CI，紅了就是要處理的。
+# ## 為什麼要分組
+#
+# 沒有 `groups` 時 Dependabot **一個相依開一個 PR**，而
+# `github/codeql-action` 的四個子 action（init／autobuild／analyze／upload-sarif）
+# 各算一個——光 CodeQL 就是四個 PR，加上 trivy 是五個，乘以十二個倉庫。
+# 那不是「更新被看見」，那是更新被淹掉。
+#
+# 分組之後每個生態系每週最多一個 PR。
+#
+# ## 為什麼不收 major
+#
+# major 是一次**遷移**，不是一次更新，而 Dependabot 判斷不了相依圖收不收得下。
+# 實測（2026-08-11）：它替四個倉庫提了 `typescript` 5.9 → 7.0，
+# 而 `@astrojs/check` 的 peer 範圍是 `^5 || ^6`——`npm ci` 直接 ERESOLVE，
+# **那些 PR 沒有任何一顆有機會變綠**。
+#
+# 一個沒有人能處理的紅燈，最後會被學會忽略，連同它旁邊那個真的紅燈一起
+# （見 workspace `decisions/process/掃描的紅燈要有人處理得了.md`）。
+# 所以 major 不自動開 PR；要升的時候由人讀 changelog、一次做完。
+#
+# **這不影響有漏洞的相依**：那走 Dependabot alerts 與 security updates，
+# 與這裡的版本更新是兩條路。
 version: 2
 updates:
-  # workflow 裡釘住的 action SHA。
+  # workflow 裡釘住的 action SHA。全部收在一個 PR 裡。
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -18,7 +38,11 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "ci"
+    groups:
+      actions:
+        patterns: ["*"]
 
+  # Go 相依。major 由人手動升（見檔頭）。
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
@@ -26,3 +50,9 @@ updates:
     open-pull-requests-limit: 5
     commit-message:
       prefix: "deps"
+    groups:
+      go:
+        patterns: ["*"]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
