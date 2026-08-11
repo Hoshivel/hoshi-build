@@ -56,6 +56,13 @@ jobs:
       contents: read
       # 只有這個 job 需要寫 code scanning。
       security-events: write
+      # CodeQL 的 analyze 會去讀本次 workflow run 的資訊，而**私有倉庫**要有
+      # 這個權限才讀得到。少了它，掃描本身完全成功——資料庫建好、查詢跑完、
+      # SARIF 產出、artifact 也上傳了——然後 job 以
+      # `Resource not accessible by integration` 收場，狀態是 configuration error。
+      #
+      # 公開倉庫不需要它，所以這個洞只會在私有倉庫出現。
+      actions: read
     strategy:
       fail-fast: false
       matrix:
