@@ -1,0 +1,41 @@
+# Gitleaks 設定：預設規則，加上這個組織的合成值。
+#
+# 首次全倉庫掃描得到 60 個命中，**全部是誤報**，而且只有六個相異的值：
+# 測試用的固定祕密、RFC 6455 拿來當範例的 WebSocket key，以及 hoshi-mail
+# 明文標示「Validate 在非 loopback 下會拒絕」的開發金鑰。
+#
+# ## 為什麼用「值」而不是「路徑」做允許清單
+#
+# 直覺的做法是把 `*_test.go` 與 `testdata/` 整個排除，那會讓 60 個命中一次歸零——
+# 也會讓**真的**被貼進測試檔的正式憑證一起消失。那不是理論上的風險：測試檔正是
+# 最容易貼進真值的地方，因為「反正只是測試」。
+#
+# 所以這裡列的是**那六個值本身**。每個檔案都還在被掃，只是這幾個公開、
+# 刻意合成、在版控裡躺著也沒有任何意義的字串不再被報出來。
+#
+# 新增例外時照這個判準：**這個字串換成別的還能用嗎？** 能，它就不是憑證；
+# 不能，那它就該從版控裡拿掉，而不是加進這份清單。
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "本組織測試共用的固定祕密（重複的 hex，長度剛好等於各處的最小值）"
+regexTarget = "secret"
+regexes = [
+  '''^(?:0123456789abcdef)+$''',
+  '''^(?:fedcba9876543210)+$''',
+]
+
+[[allowlists]]
+description = "RFC 6455 §1.3 的範例 WebSocket key（\"the sample nonce\" 的 base64），出現在握手說明裡"
+regexTarget = "secret"
+regexes = [
+  '''^dGhlIHNhbXBsZSBub25jZQ==$''',
+]
+
+[[allowlists]]
+description = "hoshi-mail 的開發金鑰，明文寫著 Validate 在非 loopback 下會拒絕（base64 的 hoshi-mail-dev-*-key-000…）"
+regexTarget = "secret"
+regexes = [
+  '''^aG9zaGktbWFpbC1kZXYt[A-Za-z0-9+/=]+$''',
+]
