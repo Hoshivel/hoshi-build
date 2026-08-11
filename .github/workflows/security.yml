@@ -9,10 +9,13 @@
 # | **Gitleaks** | 有沒有憑證被提交進來 |
 # | **Trivy** | 相依樹與設定檔裡有沒有已知問題 |
 #
-# **每週排程不是多餘的。** push 觸發回答的是「我這次改動有沒有帶進問題」，
-# 排程回答的是「**沒有動過的程式**今天有沒有變成有問題的」——新的 advisory
-# 是對著既有的相依發布的，而那時候沒有人在推 commit。少了排程，
-# 一個服務可以整季不被掃到。
+# **每週排程不是多餘的。** 隨 `ci.yml` 觸發的那一次回答的是「我這次改動有沒有
+# 帶進問題」，排程回答的是「**沒有動過的程式**今天有沒有變成有問題的」——
+# 新的 advisory 是對著既有的相依發布的，而那時候沒有人在推 commit。
+# 少了排程，一個服務可以整季不被掃到。
+#
+# 排程還多守一件事：它是**唯一不經過基礎驗證那道閘**的進入點（見下方 `on:`）。
+# main 編不過的那幾天，掃描仍然照跑。
 #
 # ## SARIF 上傳為什麼容許失敗
 #
@@ -26,20 +29,42 @@
 name: 安全掃描
 
 on:
-  push:
-    branches: [main]
-  # 草稿 PR 不跑（每個 job 的 `if`），與 ci.yml 同一條規則。
-  pull_request:
-    branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review]
+  # **本支不自己掛 push 與 pull_request**，改由 `ci.yml` 在基礎驗證
+  # （lint／format → 單元測試 → 建置）綠燈之後呼叫。
+  #
+  # 理由是 `needs:` 只在同一個 workflow 檔內成立，跨檔案沒有辦法表達
+  # 「前一支綠了再跑」。改成可被呼叫的 workflow 之後，ci.yml 的 `security`
+  # job 用 `needs:` 把順序寫出來——基礎驗證紅燈時，這裡整組 **skipped**。
+  #
+  # 換掉的是什麼：CodeQL 的 autobuild 與 govulncheck **都要先建置得起來**，
+  # 建置壞掉時它們吐的是同一個編譯錯誤換一種包裝，四十分鐘換到一顆
+  # 與根因無關的第二紅燈。而多餘的紅燈會稀釋掉真的那一顆——同 `ci.yml`
+  # 檔頭與 workspace `AGENTS.md` §1.9 講的是同一件事。
+  #
+  # 用 `workflow_call` 而不是 `workflow_run` 是刻意的：`workflow_run` 只讀
+  # **預設分支**上的 workflow 檔，所以改這支檔案的 PR 驗不到自己的改動，
+  # 而且它的執行不會掛回那個 PR 的檢查清單。本地 `uses: ./…` 讀的是
+  # **被呼叫那一顆 commit** 的檔案，兩件事都不會發生。
+  workflow_call:
   schedule:
     # 每週一次。各倉庫的分鐘與小時刻意錯開，十五個倉庫同時醒來只會互相排隊。
+    #
+    # **排程這一條刻意不經過基礎驗證。** 它回答的是「沒有動過的程式今天有沒有
+    # 變成有問題的」，那個問題與 main 現在編不編得過無關；讓它也跟著基礎驗證
+    # 一起 skipped，等於一個紅著的 main 可以讓掃描停擺一整週。
     - cron: "02 6 * * 1"
   workflow_dispatch:
 
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+# **這裡刻意沒有 `concurrency:`。**
+#
+# 被 ci.yml 呼叫時，called workflow 讀到的 `github` context 是**呼叫端的**——
+# `github.workflow` 會是 "CI"，所以照抄 ci.yml 那組
+# `${{ github.workflow }}-${{ github.ref }}` 會算出**與呼叫端完全相同**的群組，
+# 變成同一次執行跟自己搶號碼牌（`cancel-in-progress` 為真時是自己取消自己）。
+#
+# 它也不需要：被呼叫時這些 job 屬於 ci.yml 那一次 run，ci.yml 的 concurrency
+# 取消那次 run 會一併取消它們。剩下的兩個進入點是每週排程（一週一次、單一 ref）
+# 與手動觸發（人明確按下去的，不該被安靜取消）。
 
 # 預設只讀。要寫 code scanning 的 job 自己在 job 層加 security-events: write，
 # 這樣 gitleaks 與 govulncheck 這種不上傳的 job 就拿不到那個權限。
@@ -49,7 +74,6 @@ permissions:
 jobs:
   codeql:
     name: CodeQL (${{ matrix.language }})
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
@@ -110,7 +134,6 @@ jobs:
 
   govulncheck:
     name: govulncheck
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 25
     steps:
@@ -186,7 +209,6 @@ jobs:
 
   gitleaks:
     name: Gitleaks
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -235,7 +257,6 @@ jobs:
 
   trivy:
     name: Trivy
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 25
     permissions:

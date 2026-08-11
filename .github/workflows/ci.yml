@@ -61,3 +61,25 @@ jobs:
       # 它壞掉時最先發現的應該是本倉庫的維護者。
       - name: hoshi build
         run: go run ./cmd/hoshi build
+
+  # 安全掃描接在基礎驗證之後：`verify` 紅燈時整組 **skipped**，
+  # 而不是拿一份編譯不過的原始碼去跑四十分鐘的 CodeQL，再收到一顆
+  # 與根因無關的第二紅燈。掃描本身的定義在 `security.yml`，
+  # 那支同時還掛著每週排程（**不**經過這道閘）。
+  #
+  # 不必再寫一次草稿 PR 的 `if`：`verify` 因為草稿而 skipped 時，
+  # `needs:` 它的 job 一併 skipped。
+  security:
+    name: 安全掃描
+    needs: [verify]
+    uses: ./.github/workflows/security.yml
+    permissions:
+      contents: read
+      # 呼叫端的權限是被呼叫 job 的**上限**，所以這裡要給到聯集。
+      # CodeQL 與 Trivy 上傳 SARIF 要 security-events: write；
+      security-events: write
+      # CodeQL 在**私有倉庫**要讀本次 run 的資訊，少了它掃描全成功、
+      # job 卻以 `Resource not accessible by integration` 收場。
+      actions: read
+    # 掃描要建置本倉庫，而建置可能需要 HOSHIVEL_CI_TOKEN（私有 module）。
+    secrets: inherit
