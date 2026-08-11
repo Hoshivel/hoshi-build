@@ -94,7 +94,7 @@ jobs:
 
       - name: 上傳到 code scanning（沒有 GHAS 時會失敗，不影響結論）
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@9e3211c9a3b9311dfe05da2ed48eea3386f042dd # v4.37.6
+        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
         with:
           sarif_file: sarif
           category: "/language:${{ matrix.language }}"
@@ -248,7 +248,7 @@ jobs:
 
       - name: 上傳到 code scanning（沒有 GHAS 時會失敗，不影響結論）
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@9e3211c9a3b9311dfe05da2ed48eea3386f042dd # v4.37.6
+        uses: github/codeql-action/upload-sarif@5595ccaf912efad79be6eef63a5619ff05969be3 # v4.37.6
         with:
           sarif_file: trivy.sarif
           category: trivy
