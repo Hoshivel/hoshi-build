@@ -1,0 +1,256 @@
+# 安全掃描。
+#
+# 四種掃描，各回答一個別人回答不了的問題：
+#
+# | | 問什麼 |
+# |---|---|
+# | **CodeQL** | 這份原始碼裡有沒有已知形狀的漏洞（注入、路徑穿越、憑證誤用…） |
+# | **govulncheck** | 我們**實際呼叫得到**的路徑上有沒有已知的 Go 漏洞 |
+# | **Gitleaks** | 有沒有憑證被提交進來 |
+# | **Trivy** | 相依樹與設定檔裡有沒有已知問題 |
+#
+# **每週排程不是多餘的。** push 觸發回答的是「我這次改動有沒有帶進問題」，
+# 排程回答的是「**沒有動過的程式**今天有沒有變成有問題的」——新的 advisory
+# 是對著既有的相依發布的，而那時候沒有人在推 commit。少了排程，
+# 一個服務可以整季不被掃到。
+#
+# ## SARIF 上傳為什麼容許失敗
+#
+# 私有倉庫的 code scanning 需要 GitHub Advanced Security。沒有啟用時
+# `upload-sarif` 會以 403 收場，而那**不是這次掃描的結論**——它是帳務狀態。
+# 所以上傳那一步 `continue-on-error: true`，而 SARIF **一律**另存成 artifact：
+# 有 GHAS 的倉庫在 Security 分頁看結果，沒有的從 artifact 下載，
+# 兩邊都不會出現「掃了但結果不知道去哪了」。
+#
+# 掃描本身的失敗**不**容許——那才是這支 workflow 的結論。
+name: 安全掃描
+
+on:
+  push:
+    branches: [main]
+  # 草稿 PR 不跑（每個 job 的 `if`），與 ci.yml 同一條規則。
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+  schedule:
+    # 每週一次。各倉庫的分鐘與小時刻意錯開，十五個倉庫同時醒來只會互相排隊。
+    - cron: "02 6 * * 1"
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# 預設只讀。要寫 code scanning 的 job 自己在 job 層加 security-events: write，
+# 這樣 gitleaks 與 govulncheck 這種不上傳的 job 就拿不到那個權限。
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      # 只有這個 job 需要寫 code scanning。
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: ["go"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - if: matrix.language == 'go'
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: 初始化 CodeQL
+        uses: github/codeql-action/init@9e3211c9a3b9311dfe05da2ed48eea3386f042dd # v4.37.6
+        with:
+          languages: ${{ matrix.language }}
+          queries: security-extended
+
+      - name: 建置
+        uses: github/codeql-action/autobuild@9e3211c9a3b9311dfe05da2ed48eea3386f042dd # v4.37.6
+
+      - name: 分析
+        uses: github/codeql-action/analyze@9e3211c9a3b9311dfe05da2ed48eea3386f042dd # v4.37.6
+        with:
+          category: "/language:${{ matrix.language }}"
+          # 先落地成檔案，再分開上傳——這樣 GHAS 沒開的倉庫仍然拿得到結果。
+          output: sarif
+          upload: never
+
+      - name: 上傳到 code scanning（沒有 GHAS 時會失敗，不影響結論）
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@9e3211c9a3b9311dfe05da2ed48eea3386f042dd # v4.37.6
+        with:
+          sarif_file: sarif
+          category: "/language:${{ matrix.language }}"
+
+      - name: 保留 SARIF
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: codeql-sarif-${{ matrix.language }}
+          path: sarif
+          retention-days: 30
+          if-no-files-found: warn
+
+  govulncheck:
+    name: govulncheck
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # 這個 job 刻意用**最新的穩定版**，不是 go.mod 釘的那一版。
+          #
+          # go.mod 的 `go` 指令是下限，不是我們該拿來衡量安全性的版本：用它去掃，
+          # 得到的幾乎全是「這個修補版的標準函式庫有已知問題」，而那對讀報告的人
+          # 沒有任何可以動的東西。用最新穩定版問的才是有用的那個問題——
+          # **以我們真的會拿去建置的工具鏈來看，這份程式碼還走得到什麼漏洞。**
+          go-version: stable
+
+      - name: 安裝 govulncheck
+        run: go install golang.org/x/vuln/cmd/govulncheck@latest
+
+      - name: govulncheck
+        working-directory: .
+        # findings 全部留下來，判斷交給下一步——govulncheck 自己的結束碼
+        # 分不出「相依有洞」與「工具鏈落後一個修補版」。
+        run: govulncheck -format json ./... > govulncheck.json || true
+
+      - name: 判讀
+        working-directory: .
+        # **相依的漏洞擋下建置，標準函式庫的只警告。**
+        #
+        # 兩者可以動的東西不一樣：相依的改一行 go.mod 就好；標準函式庫的唯一
+        # 修法是換一個更新的 Go 工具鏈，而**永遠**會有一個「最新穩定版仍未修掉」
+        # 的窗口。把後者也當成紅燈，這支 workflow 就會長期紅著——而一個沒有人
+        # 能處理的紅燈，最後只會被學會忽略，連同它旁邊那個真的紅燈一起。
+        run: |
+          python3 - <<'GATE'
+          import json, sys
+
+          raw = open("govulncheck.json").read()
+          decoder, at, findings = json.JSONDecoder(), 0, []
+          while at < len(raw):
+              while at < len(raw) and raw[at].isspace():
+                  at += 1
+              if at >= len(raw):
+                  break
+              obj, at = decoder.raw_decode(raw, at)
+              if "finding" in obj:
+                  findings.append(obj["finding"])
+
+          # 呼叫得到的才算：trace 的第一格帶著我們呼叫的那個函式。
+          called = [f for f in findings if f.get("trace") and f["trace"][0].get("function")]
+          stdlib = [f for f in called if f["trace"][0].get("module") == "stdlib"]
+          ours = [f for f in called if f["trace"][0].get("module") != "stdlib"]
+
+          for f in stdlib:
+              print("::warning::%s 在標準函式庫，修法是升 Go 工具鏈（fixed in %s）"
+                    % (f["osv"], f.get("fixed_version", "?")))
+          for f in ours:
+              print("::error::%s in %s — fixed in %s"
+                    % (f["osv"], f["trace"][0].get("module"), f.get("fixed_version", "?")))
+
+          print("呼叫得到的漏洞：%d（標準函式庫 %d、相依 %d）"
+                % (len(called), len(stdlib), len(ours)))
+          sys.exit(1 if ours else 0)
+          GATE
+
+      - name: 保留報告
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: govulncheck-root
+          path: ./govulncheck.json
+          retention-days: 30
+          if-no-files-found: warn
+
+  gitleaks:
+    name: Gitleaks
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # 掃整個歷史，不只這一顆 commit：一個被刪掉的憑證仍然在歷史裡，
+          # 而它仍然是一個憑證。
+          fetch-depth: 0
+
+      # 用釘住的 release 執行檔而不是 action：gitleaks 的官方 action 對組織
+      # 帳號要授權金鑰，而這件事不值得多一個要管的密鑰。校驗碼比對過才解壓，
+      # 否則「釘住版本」只擋得住換版本，擋不住換內容。
+      - name: 安裝 gitleaks 8.30.1
+        run: |
+          set -euo pipefail
+          curl -fsSL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          chmod +x gitleaks
+
+      # `gitleaks git`，不是 `detect`——後者在 v8.19 就被拆成 `git` 與 `dir` 了，
+      # 而 v8.30 已經不認得它。誤報的允許清單在倉庫根目錄的 .gitleaks.toml，
+      # gitleaks 會自己讀。
+      - name: 掃描
+        run: ./gitleaks git --redact --report-format sarif --report-path gitleaks.sarif --exit-code 1 .
+
+      - name: 保留報告
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: gitleaks-sarif
+          path: gitleaks.sarif
+          retention-days: 30
+          if-no-files-found: warn
+
+  trivy:
+    name: Trivy
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: 掃描相依與設定
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: fs
+          scanners: vuln,secret,misconfig
+          format: sarif
+          output: trivy.sarif
+          # 掃描本身不因為發現東西而失敗——嚴重度的判斷交給讀報告的人。
+          # 真正該擋下建置的是 govulncheck（它只報呼叫得到的）。
+          exit-code: "0"
+          ignore-unfixed: true
+
+      - name: 上傳到 code scanning（沒有 GHAS 時會失敗，不影響結論）
+        continue-on-error: true
+        uses: github/codeql-action/upload-sarif@9e3211c9a3b9311dfe05da2ed48eea3386f042dd # v4.37.6
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
+
+      - name: 保留報告
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: trivy-sarif
+          path: trivy.sarif
+          retention-days: 30
+          if-no-files-found: warn

@@ -1,0 +1,28 @@
+# Dependabot —— 讓釘住的版本不會腐爛。
+#
+# 各 workflow 的 `uses:` 全部釘 40 字元 commit SHA（安全發現 6）。**釘死之後
+# 就必須有東西負責更新它**：一個沒有人維護的 SHA 會一路停在有已知問題的版本上，
+# 而它看起來和一個剛更新過的 SHA 一模一樣。可變 tag 換到的自動更新是**代價**
+# ——上游改了 tag 指向就換掉了我們跑的程式，沒有任何審閱——這裡把那件事換成
+# 一個看得見、審得到的 PR。
+#
+# **PR 是草稿以外的形狀由 workspace `AGENTS.md` §1.9 管**：Dependabot 開的是
+# 正式 PR，所以它會跑 CI，紅了就是要處理的。
+version: 2
+updates:
+  # workflow 裡釘住的 action SHA。
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "ci"
+
+  - package-ecosystem: "gomod"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: "deps"
