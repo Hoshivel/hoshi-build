@@ -211,8 +211,18 @@ jobs:
       # `gitleaks git`，不是 `detect`——後者在 v8.19 就被拆成 `git` 與 `dir` 了，
       # 而 v8.30 已經不認得它。誤報的允許清單在倉庫根目錄的 .gitleaks.toml，
       # gitleaks 會自己讀。
+      #
+      # `--log-opts=HEAD` 把範圍收到**被 checkout 的那一條分支的完整歷史**。
+      # 少了它，掃的是這個 clone 裡的**所有 ref**——而上面的 `fetch-depth: 0`
+      # 會把每一條遠端分支都抓下來，所以任何一條還沒合併的分支上的誤報，
+      # 都會讓這個倉庫之後**每一個 PR** 變紅，而紅燈的位置與內容跟那個 PR
+      # 的 diff 毫無關係。一個與自己無關的紅燈，看的人只會學會忽略它。
+      #
+      # 這**不是**把檢查放寬：`--log-opts=HEAD` 掃的仍然是完整歷史
+      # （「一個被刪掉的憑證仍然在歷史裡」那句照舊成立），而帶著問題的那條
+      # 分支自己被 checkout 時一樣會紅——它開 PR 時照樣擋得下來。
       - name: 掃描
-        run: ./gitleaks git --redact --report-format sarif --report-path gitleaks.sarif --exit-code 1 .
+        run: ./gitleaks git --redact --report-format sarif --report-path gitleaks.sarif --exit-code 1 --log-opts=HEAD .
 
       - name: 保留報告
         if: always()
