@@ -8,8 +8,10 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -96,7 +98,16 @@ type TestConfig struct {
 
 // DevConfig is the `dev:` section — what `hoshi dev` starts.
 type DevConfig struct {
-	Open      string    `yaml:"open"      json:"open"`
+	Open string `yaml:"open" json:"open"`
+	// Port is the port `-open` aims at: the one number a service has to state
+	// for `hoshi dev -open` to work at all.
+	//
+	// Without it the only way to name a port was `processes[].ports`, and a
+	// process entry requires `run` — so declaring a port meant restating the
+	// `go run ./cmd/<name>` this tool already derives. Every repository here
+	// except one therefore had no port anywhere, and `-open` had nothing to
+	// open. A single number is the whole of what was missing.
+	Port      int       `yaml:"port"      json:"port"`
 	Processes []Process `yaml:"processes" json:"processes"`
 }
 
@@ -232,6 +243,15 @@ func (c *Config) applyDefaults() {
 
 	if len(c.Dev.Processes) == 0 {
 		c.Dev.Processes = c.defaultProcesses()
+		// A declared port earns the busy check as much as a written-out one, so
+		// `dev.port` seeds the process it must belong to. Only when there is
+		// exactly one: with a backend and a frontend inferred, which of them
+		// owns the number is a guess, and guessing wrong reports the wrong
+		// process as the one holding a busy port. `-open` still uses it either
+		// way — that part needs no owner.
+		if c.Dev.Port != 0 && len(c.Dev.Processes) == 1 {
+			c.Dev.Processes[0].Ports = []int{c.Dev.Port}
+		}
 	}
 	for i := range c.Dev.Processes {
 		if c.Dev.Processes[i].Name == "" {
@@ -382,6 +402,21 @@ func (c *Config) validateSteps() []error {
 		}
 	}
 
+	if c.Dev.Port != 0 && (c.Dev.Port < 1 || c.Dev.Port > 65535) {
+		errs = append(errs, fmt.Errorf("`dev.port` 的 %d 不是合法的埠", c.Dev.Port))
+	}
+	// Both keys aiming at different ports is not a preference this tool can
+	// resolve: one of them is what the browser opens and the other is what it
+	// waits for, and either choice leaves the other key doing nothing.
+	if c.Dev.Port != 0 && c.Dev.Open != "" {
+		if op := LoopbackPort(c.Dev.Open); op != 0 && op != c.Dev.Port {
+			errs = append(errs, fmt.Errorf(
+				"`dev.port` 是 %d，但 `dev.open` 指向 %d：兩個都設定時必須是同一個埠"+
+					"（只要開啟的網址不是預設的 `http://localhost:<port>`，寫 `dev.open` 一個就夠了）",
+				c.Dev.Port, op))
+		}
+	}
+
 	names := map[string]bool{}
 	for i, proc := range c.Dev.Processes {
 		where := fmt.Sprintf("dev.processes[%d]", i)
@@ -411,6 +446,29 @@ func (c *Config) validateSteps() []error {
 		}
 	}
 	return errs
+}
+
+// LoopbackPort is the port of a URL that points at this machine, or 0.
+//
+// It answers one question for `-open`: is there a port here worth waiting for
+// before a browser is sent to this address? A remote host is not — nothing
+// local will ever start listening on it — and neither is a URL with no port,
+// where the scheme's default says nothing about what a dev server picked.
+func LoopbackPort(rawURL string) int {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return 0
+	}
+	switch u.Hostname() {
+	case "localhost", "127.0.0.1", "::1":
+	default:
+		return 0
+	}
+	port, err := strconv.Atoi(u.Port())
+	if err != nil || port < 1 || port > 65535 {
+		return 0
+	}
+	return port
 }
 
 // checkRelPath keeps configured paths inside the repository. `clean` removes

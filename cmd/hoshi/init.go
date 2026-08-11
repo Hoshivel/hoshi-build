@@ -241,6 +241,14 @@ func render(g guess) string {
 	b.WriteString("#   test → gofmt + go vet + go build + go test -race ./...\n")
 	b.WriteString("#   dev  → go run <go.package> ＋ npm run dev\n")
 	b.WriteString("# 只有和上面不一樣時才需要寫出來。\n")
+	// The one thing no default can supply: only the service knows the port it
+	// binds. Left unsaid, `hoshi dev -open` has nothing to open — which is
+	// exactly how every repository here ended up without one.
+	b.WriteString("#\n")
+	b.WriteString("# 唯一推不出來的是埠——只有服務自己知道它綁哪一個。\n")
+	b.WriteString("# 要用 `hoshi dev -open` 就取消底下兩行的註解：\n")
+	b.WriteString("# dev:\n")
+	b.WriteString("#   port: 8080\n")
 
 	return b.String()
 }

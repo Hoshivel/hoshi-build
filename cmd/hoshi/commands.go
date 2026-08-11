@@ -405,6 +405,24 @@ func describe(p *ui.Printer, cfg *config.Config) {
 	for _, proc := range cfg.Dev.Processes {
 		p.Note("dev／%s：%s（在 %s）", proc.Name, proc.Run, proc.Dir)
 	}
+	// `check` is where someone looks after `-open` did nothing, so it has to
+	// answer that question rather than leave them reading the config again.
+	p.Note("dev -open：%s", describeOpen(cfg))
+}
+
+func describeOpen(cfg *config.Config) string {
+	switch {
+	case cfg.Dev.Open != "":
+		return cfg.Dev.Open
+	case cfg.Dev.Port != 0:
+		return fmt.Sprintf("http://localhost:%d", cfg.Dev.Port)
+	}
+	for _, proc := range cfg.Dev.Processes {
+		if rp := proc.ReadyPort(); rp != 0 {
+			return fmt.Sprintf("http://localhost:%d（取自 %s 的埠）", rp, proc.Name)
+		}
+	}
+	return "沒有目標——設定 `dev.port` 才會開瀏覽器"
 }
 
 func describeTest(cfg *config.Config) string {

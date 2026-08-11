@@ -10,7 +10,7 @@ hoshi build -package   # 順便壓一包
 hoshi build -target linux/amd64,windows/amd64
 hoshi test             # gofmt → vet → build → test，前端跑設定的 scripts
 hoshi dev              # 前後端一起跑，Ctrl+C 一次全停
-hoshi dev -open        # 前端就緒後自動開瀏覽器
+hoshi dev -open        # 目標埠就緒後自動開瀏覽器
 ```
 
 設定通常只有三行：
@@ -102,6 +102,8 @@ backend  │ GET /api/me 200
   但它服務不了一個請求。
 - **啟動前檢查 `ports`**，被占用就直接拒絕，不會讓你去看某個 dev server
   深處丟出來的錯誤訊息。
+- **`-open` 等的是它要開的那個埠。** 設定只要兩行（`dev:` ＋ `port:`），
+  瀏覽器不會在服務還沒開始聽之前就打開。
 
 > **註**：這取代了原本「各開一個終端機視窗（Windows）／背景程序寫日誌檔（Unix）」
 > 的作法。那種作法之所以還需要「下次啟動先找出並殺掉占著埠的舊行程」，
