@@ -307,6 +307,58 @@ dev:
 	}
 }
 
+// -dry-run has to answer "what would -open do", because that is the flag whose
+// behaviour is hard to predict from the file. It used to return before the
+// opener ran and say nothing at all.
+func TestDryRunReportsTheOpenTarget(t *testing.T) {
+	c := repo(t, "name: demo\ntype: go\ndev:\n  port: 8095\n", nil)
+
+	var out bytes.Buffer
+	if err := Run(context.Background(), c, ui.New(&out, &out, false), Options{
+		Open: true, DryRun: true,
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(out.String(), "等 8095 就緒後開啟 http://localhost:8095") {
+		t.Errorf("-dry-run 沒有講出 -open 會做什麼：\n%s", out.String())
+	}
+}
+
+// With nothing to go on, the message has to name the key to add. "沒有設定" only
+// restates what the reader already knows.
+func TestDryRunNamesTheKeyToAdd(t *testing.T) {
+	c := repo(t, "name: demo\ntype: go\n", nil)
+
+	var out bytes.Buffer
+	if err := Run(context.Background(), c, ui.New(&out, &out, false), Options{
+		Open: true, DryRun: true,
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(out.String(), "dev:") || !strings.Contains(out.String(), "port:") {
+		t.Errorf("警告沒有講出該加哪一個鍵：\n%s", out.String())
+	}
+}
+
+// -only that leaves out the process holding the open port is worth saying at
+// once: the alternative is a full timeout and a browser that never opens, with
+// nothing naming the flag responsible.
+func TestOnlyExcludingTheOpenPortWarnsImmediately(t *testing.T) {
+	c := repo(t, "name: demo\ntype: go\ndev:\n  open: http://localhost:5173\n  processes:\n"+
+		"    - {name: backend, run: sleep 1, ports: [8080]}\n"+
+		"    - {name: frontend, run: sleep 1, ports: [5173]}\n", nil)
+
+	var out bytes.Buffer
+	if err := Run(context.Background(), c, ui.New(&out, &out, false), Options{
+		Open: true, DryRun: true, Only: []string{"backend"},
+	}); err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	if !strings.Contains(out.String(), "-only 沒有選它") {
+		t.Errorf("沒有警告 -only 排除了開啟目標：\n%s", out.String())
+	}
+}
+
 func TestOpenTarget(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -315,10 +367,43 @@ func TestOpenTarget(t *testing.T) {
 		wantPort int
 	}{
 		{
-			name:     "explicit url",
+			// The wait follows the URL, not the first port some other process
+			// happened to declare. This case used to expect 5173 — that is the
+			// bug: it opened 9999 after waiting for something else entirely.
+			name:     "explicit url decides the wait",
 			body:     "name: d\ntype: go\ndev:\n  open: http://localhost:9999/x\n  processes:\n    - {name: a, run: sleep 1, ports: [5173]}\n",
 			wantURL:  "http://localhost:9999/x",
+			wantPort: 9999,
+		},
+		{
+			// The shape that made this worth fixing: a backend that starts
+			// first and a frontend the browser is actually pointed at.
+			name: "waits for the frontend it opens, not the backend",
+			body: "name: d\ntype: go\ndev:\n  open: http://localhost:5173\n  processes:\n" +
+				"    - {name: backend, run: sleep 1, ports: [8080, 8081]}\n" +
+				"    - {name: frontend, run: sleep 1, ports: [5173]}\n",
+			wantURL:  "http://localhost:5173",
 			wantPort: 5173,
+		},
+		{
+			name:     "dev.port alone is enough",
+			body:     "name: d\ntype: go\ndev:\n  port: 8095\n",
+			wantURL:  "http://localhost:8095",
+			wantPort: 8095,
+		},
+		{
+			name:     "dev.port with a path-bearing open url",
+			body:     "name: d\ntype: go\ndev:\n  port: 8095\n  open: http://localhost:8095/console\n",
+			wantURL:  "http://localhost:8095/console",
+			wantPort: 8095,
+		},
+		{
+			// A remote URL has no local port to wait for, so the wait falls
+			// back to what the processes declare.
+			name:     "remote url falls back to the declared port",
+			body:     "name: d\ntype: go\ndev:\n  open: https://example.test/app\n  processes:\n    - {name: a, run: sleep 1, ports: [4321]}\n",
+			wantURL:  "https://example.test/app",
+			wantPort: 4321,
 		},
 		{
 			name:     "derived from the ready port",

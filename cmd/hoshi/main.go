@@ -56,7 +56,7 @@ test：
   -go / -npm         只跑其中一邊
 
 dev：
-  -open              前端就緒後自動開瀏覽器
+  -open              目標埠就緒後自動開瀏覽器（需要 dev.port 或 dev.open）
   -only <清單>       只啟動指定的行程，逗號分隔
   -args "<字串>"     附加參數給第一個行程
   -no-check          不檢查埠是否被占用

@@ -38,9 +38,19 @@ func setProcessGroup(cmd *exec.Cmd) {
 // openBrowser opens a URL with the platform's handler.
 func openBrowser(url string) error {
 	for _, opener := range []string{"xdg-open", "open"} {
-		if path, err := exec.LookPath(opener); err == nil {
-			return exec.Command(path, url).Start()
+		path, err := exec.LookPath(opener)
+		if err != nil {
+			continue
 		}
+		cmd := exec.Command(path, url)
+		if err := cmd.Start(); err != nil {
+			return err
+		}
+		// The opener hands the URL to the desktop and exits immediately. Nobody
+		// waits for it, so without this it stays a zombie for as long as the
+		// dev session runs — which is the whole working day.
+		go cmd.Wait()
+		return nil
 	}
 	return errNoOpener
 }

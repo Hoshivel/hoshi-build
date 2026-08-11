@@ -26,5 +26,12 @@ func openBrowser(url string) error {
 	// `start` is a cmd.exe builtin, not an executable. The empty string is the
 	// window title — without it, a quoted URL becomes the title and nothing
 	// opens.
-	return exec.Command("cmd", "/c", "start", "", url).Start()
+	cmd := exec.Command("cmd", "/c", "start", "", url)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	// Reap it: cmd.exe exits as soon as the URL is handed over, and an
+	// unwaited child holds its handles for the life of the dev session.
+	go cmd.Wait()
+	return nil
 }

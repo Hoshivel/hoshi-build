@@ -382,6 +382,116 @@ dev:
 	}
 }
 
+// TestDevPortSeedsInferredProcess pins the point of `dev.port`: one number, in
+// a repository with no `dev:` processes at all, is enough for `-open` to have a
+// target and for the busy-port check to cover it.
+func TestDevPortSeedsInferredProcess(t *testing.T) {
+	c := mustLoad(t, "name: svc\ntype: go\ndev:\n  port: 8095\n")
+
+	if len(c.Dev.Processes) != 1 {
+		t.Fatalf("Processes = %+v", c.Dev.Processes)
+	}
+	if got := c.Dev.Processes[0].Run.String(); got != "go run ./cmd/svc" {
+		t.Errorf("推得的 run = %q，設定了 dev.port 不該影響它", got)
+	}
+	if got := c.Dev.Processes[0].ReadyPort(); got != 8095 {
+		t.Errorf("ReadyPort() = %d, want 8095（dev.port 要餵給推得的行程）", got)
+	}
+}
+
+// A backend and a frontend inferred together leave no way to tell which one
+// owns the number, and naming the wrong process as the holder of a busy port
+// sends the reader to the wrong place. `-open` still gets its target.
+func TestDevPortDoesNotGuessBetweenTwoInferredProcesses(t *testing.T) {
+	c := mustLoad(t, "name: svc\ntype: go-npm\ndev:\n  port: 5173\n")
+
+	if len(c.Dev.Processes) != 2 {
+		t.Fatalf("Processes = %+v", c.Dev.Processes)
+	}
+	for _, proc := range c.Dev.Processes {
+		if len(proc.Ports) != 0 {
+			t.Errorf("%s 被塞了埠 %v：兩個推得的行程之間不該用猜的", proc.Name, proc.Ports)
+		}
+	}
+	if c.Dev.Port != 5173 {
+		t.Errorf("Dev.Port = %d, want 5173", c.Dev.Port)
+	}
+}
+
+// Explicit processes own their own port lists; `dev.port` must not overwrite
+// what the file actually says.
+func TestDevPortLeavesExplicitProcessesAlone(t *testing.T) {
+	c := mustLoad(t, "name: svc\ntype: go\ndev:\n  port: 8080\n"+
+		"  processes:\n    - {name: a, run: sleep 1, ports: [9000]}\n")
+
+	if got := c.Dev.Processes[0].Ports; len(got) != 1 || got[0] != 9000 {
+		t.Errorf("Ports = %v, want [9000]", got)
+	}
+}
+
+func TestDevPortRejectsContradictions(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{
+			name: "out of range",
+			body: "name: svc\ntype: go\ndev:\n  port: 99999\n",
+			want: "`dev.port` 的 99999 不是合法的埠",
+		},
+		{
+			// Two keys aiming at different ports: whichever one wins, the other
+			// silently does nothing, which is the failure this parser exists to
+			// refuse.
+			name: "port and open disagree",
+			body: "name: svc\ntype: go\ndev:\n  port: 8095\n  open: http://localhost:5173\n",
+			want: "`dev.port` 是 8095，但 `dev.open` 指向 5173",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(writeTemp(t, ".hoshi-build.yaml", tc.body))
+			if err == nil {
+				t.Fatal("Load() 沒有報錯")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Errorf("錯誤訊息 = %v\n沒有提到 %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// A remote `open` has no local port, so it must not be read as a contradiction
+// with `dev.port` — the two are answering different questions there.
+func TestDevPortAllowsRemoteOpen(t *testing.T) {
+	c := mustLoad(t, "name: svc\ntype: go\ndev:\n  port: 8095\n  open: https://example.test/app\n")
+	if c.Dev.Port != 8095 || c.Dev.Open != "https://example.test/app" {
+		t.Errorf("Dev = %+v", c.Dev)
+	}
+}
+
+func TestLoopbackPort(t *testing.T) {
+	tests := []struct {
+		url  string
+		want int
+	}{
+		{"http://localhost:5173", 5173},
+		{"http://127.0.0.1:8080/console", 8080},
+		{"http://[::1]:9000", 9000},
+		{"https://example.test:8080", 0}, // not this machine
+		{"http://localhost", 0},          // no port: the scheme default says nothing
+		{"http://localhost:0", 0},
+		{"::::not a url", 0},
+		{"", 0},
+	}
+	for _, tc := range tests {
+		if got := LoopbackPort(tc.url); got != tc.want {
+			t.Errorf("LoopbackPort(%q) = %d, want %d", tc.url, got, tc.want)
+		}
+	}
+}
+
 func TestTestCommands(t *testing.T) {
 	c := mustLoad(t, `
 name: svc

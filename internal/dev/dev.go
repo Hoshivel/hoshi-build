@@ -59,6 +59,23 @@ func Run(ctx context.Context, c *config.Config, p *ui.Printer, opts Options) err
 		p.Note("%s：%s（在 %s）%s", proc.Name, proc.Run, where, portNote(proc))
 	}
 
+	// -open is the half of the plan that is easiest to get wrong and, until
+	// now, the only half -dry-run stayed silent about: it returned before the
+	// opener ran, so the flag that needed previewing was the one you could not
+	// preview.
+	if opts.Open {
+		url, port := openTarget(c, procs)
+		switch {
+		case url == "":
+			p.Warn("-open：不知道要開什麼。%s", openHint(c))
+		case port > 0:
+			p.Note("-open：等 %d 就緒後開啟 %s", port, url)
+			warnIfExcluded(c, p, procs, port)
+		default:
+			p.Note("-open：立刻開啟 %s（沒有可等的埠）", url)
+		}
+	}
+
 	if opts.DryRun {
 		p.Note("-dry-run：以上都沒有真的啟動")
 		return nil
@@ -260,18 +277,23 @@ func portInUse(port int) bool {
 	return false
 }
 
-// openWhenReady waits for the ready port to answer, then opens a browser.
+// openWhenReady waits for the opened URL's port to answer, then opens a
+// browser. What it is about to do was already printed with the plan, so this
+// reports outcomes only.
 func openWhenReady(ctx context.Context, c *config.Config, p *ui.Printer, procs []config.Process) {
 	url, port := openTarget(c, procs)
 	if url == "" {
-		p.Warn("-open：設定裡沒有 `dev.open`，也沒有任何行程宣告 ports，不知道要開什麼")
-		return
+		return // already reported with the plan
 	}
 
 	if port > 0 {
-		p.Step("等待 %d 就緒", port)
-		if !waitPort(ctx, port, 60*time.Second) {
-			p.Warn("%d 在 60 秒內沒有回應，沒有開啟瀏覽器", port)
+		if !waitPort(ctx, port, readyTimeout) {
+			// Cancelled means the session is being torn down — a process
+			// exited or Ctrl+C arrived — and the port never answering is a
+			// consequence of that, not a second thing that went wrong.
+			if ctx.Err() == nil {
+				p.Warn("%d 在 %s 內沒有回應，沒有開啟瀏覽器", port, readyTimeout)
+			}
 			return
 		}
 	}
@@ -282,22 +304,98 @@ func openWhenReady(ctx context.Context, c *config.Config, p *ui.Printer, procs [
 	p.OK("已開啟 %s", url)
 }
 
-// openTarget decides what -open should open: the configured URL, or one built
-// from the first declared ready port.
+// readyTimeout bounds the wait for the opened URL's port. A cold `go run`
+// compiles the whole module before it listens, so this is generous on purpose.
+const readyTimeout = 90 * time.Second
+
+// openTarget decides what `-open` opens, and which port to wait for first.
+//
+// The rule is one sentence: **open `dev.open` (or the URL built from
+// `dev.port`), and wait for that URL's own port.**
+//
+// Waiting used to mean "the first port any process declared", which is a
+// different thing whenever more than one process declares one. With a backend
+// on 8080 and a Vite frontend on 5173, `-open` waited for the backend and then
+// opened the frontend — and Vite is the slower of the two, so the browser
+// arrived at a port nothing was listening on yet. Tying the wait to the URL
+// removes the possibility rather than reordering it.
 func openTarget(c *config.Config, procs []config.Process) (url string, port int) {
-	for _, proc := range procs {
-		if rp := proc.ReadyPort(); rp != 0 {
-			port = rp
-			break
+	switch {
+	case c.Dev.Open != "":
+		url = c.Dev.Open
+	case c.Dev.Port != 0:
+		url = fmt.Sprintf("http://localhost:%d", c.Dev.Port)
+	default:
+		if rp := firstReadyPort(procs); rp != 0 {
+			url = fmt.Sprintf("http://localhost:%d", rp)
 		}
 	}
-	if c.Dev.Open != "" {
-		return c.Dev.Open, port
+	if url == "" {
+		return "", 0
 	}
-	if port != 0 {
-		return fmt.Sprintf("http://localhost:%d", port), port
+	return url, waitPortFor(c, url, procs)
+}
+
+// waitPortFor picks the port to wait on before opening url.
+func waitPortFor(c *config.Config, url string, procs []config.Process) int {
+	// An explicit `ready` says "wait for this one" in as many words, so it
+	// outranks anything derived.
+	for _, proc := range procs {
+		if proc.Ready != 0 {
+			return proc.Ready
+		}
 	}
-	return "", 0
+	if p := config.LoopbackPort(url); p != 0 {
+		return p
+	}
+	if c.Dev.Port != 0 {
+		return c.Dev.Port
+	}
+	return firstReadyPort(procs)
+}
+
+func firstReadyPort(procs []config.Process) int {
+	for _, proc := range procs {
+		if rp := proc.ReadyPort(); rp != 0 {
+			return rp
+		}
+	}
+	return 0
+}
+
+// warnIfExcluded reports a `-only` selection that left out the process holding
+// the port `-open` is about to wait for. Without it the symptom is a full
+// timeout followed by a browser that never opens, and nothing naming the flag
+// that caused it.
+func warnIfExcluded(c *config.Config, p *ui.Printer, selected []config.Process, port int) {
+	if port == 0 || len(selected) == len(c.Dev.Processes) {
+		return
+	}
+	for _, proc := range selected {
+		for _, declared := range proc.Ports {
+			if declared == port {
+				return
+			}
+		}
+	}
+	for _, proc := range c.Dev.Processes {
+		for _, declared := range proc.Ports {
+			if declared == port {
+				p.Warn("-open 要等的 %d 屬於 %s，而 -only 沒有選它", port, proc.Name)
+				return
+			}
+		}
+	}
+}
+
+// openHint names the key to add, rather than the keys that are missing. The
+// reader already knows nothing is set; what they need is the one line to write.
+func openHint(c *config.Config) string {
+	return fmt.Sprintf("在 .hoshi-build.yaml 加上服務監聽的埠：\n"+
+		"        dev:\n"+
+		"          port: 8080\n"+
+		"      網址不是 http://localhost:<port> 時改用 `dev.open` 指定完整網址（例：%s）",
+		"http://localhost:8080/console")
 }
 
 func waitPort(ctx context.Context, port int, timeout time.Duration) bool {
