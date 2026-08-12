@@ -27,6 +27,11 @@ func openBrowser(url string) error {
 	// window title — without it, a quoted URL becomes the title and nothing
 	// opens.
 	cmd := exec.Command("cmd", "/c", "start", "", url)
+	// Do not let the desktop handler inherit the dev process's working
+	// directory. Some browsers keep it open after cmd.exe exits, which can
+	// prevent a temporary checkout or renamed project directory from being
+	// removed for the rest of the browser session.
+	cmd.Dir = os.TempDir()
 	if err := cmd.Start(); err != nil {
 		return err
 	}

@@ -286,6 +286,43 @@ dev:
 	}
 }
 
+// localhost commonly resolves to ::1 first on Windows. A Vite/Astro server
+// can therefore own only the IPv6 loopback port even though its URL simply
+// says localhost; preflight must still see that the port is occupied.
+func TestBusyIPv6LoopbackPortIsRefusedUpFront(t *testing.T) {
+	ln, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback is unavailable: %v", err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+	// Prove the port is free on IPv4. The old IPv4-only preflight therefore
+	// missed this listener; this test is specifically guarding that regression.
+	v4, err := net.Listen("tcp4", net.JoinHostPort("127.0.0.1", fmt.Sprint(port)))
+	if err != nil {
+		t.Skipf("cannot isolate an IPv6-only occupied port: %v", err)
+	}
+	v4.Close()
+
+	err = checkPorts([]config.Process{{Name: "web", Ports: []int{port}}})
+	if err == nil || !strings.Contains(err.Error(), "占用") {
+		t.Fatalf("error = %v，預期 IPv6 loopback 埠被占用時直接拒絕啟動", err)
+	}
+}
+
+func TestFreeLoopbackPortIsAvailable(t *testing.T) {
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("IPv4 loopback is unavailable: %v", err)
+	}
+	port := ln.Addr().(*net.TCPAddr).Port
+	ln.Close()
+
+	if portInUse(port) {
+		t.Fatalf("未占用的 loopback 埠 %d 被誤報為已占用", port)
+	}
+}
+
 func TestArgsAppendToFirstProcess(t *testing.T) {
 	requireUnix(t)
 	c := repo(t, `
@@ -431,5 +468,94 @@ func TestOpenTarget(t *testing.T) {
 				t.Errorf("openTarget() = %q, %d；want %q, %d", url, port, tc.wantURL, tc.wantPort)
 			}
 		})
+	}
+}
+
+func TestReadyHostFor(t *testing.T) {
+	tests := []struct {
+		name string
+		url  string
+		port int
+		want string
+	}{
+		{name: "localhost", url: "http://localhost:4321", port: 4321, want: "localhost"},
+		{name: "explicit IPv4", url: "http://127.0.0.1:4321", port: 4321, want: "127.0.0.1"},
+		{name: "explicit IPv6", url: "http://[::1]:4321", port: 4321, want: "::1"},
+		{name: "other ready port", url: "http://127.0.0.1:4321", port: 8080, want: "localhost"},
+		{name: "remote URL", url: "https://example.test/app", port: 4321, want: "localhost"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := readyHostFor(tc.url, tc.port); got != tc.want {
+				t.Errorf("readyHostFor(%q, %d) = %q, want %q", tc.url, tc.port, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestWaitPortAcceptsIPv4AndIPv6Loopback(t *testing.T) {
+	tests := []struct {
+		name    string
+		network string
+		host    string
+	}{
+		{name: "IPv4", network: "tcp4", host: "127.0.0.1"},
+		{name: "IPv6", network: "tcp6", host: "::1"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ln, err := net.Listen(tc.network, net.JoinHostPort(tc.host, "0"))
+			if err != nil {
+				t.Skipf("%s loopback is unavailable: %v", tc.name, err)
+			}
+			defer ln.Close()
+			port := ln.Addr().(*net.TCPAddr).Port
+
+			if !waitPort(context.Background(), tc.host, port, time.Second) {
+				t.Fatalf("沒有偵測到 %s loopback 上已就緒的 %d", tc.name, port)
+			}
+		})
+	}
+}
+
+// This is the exact Windows failure: localhost resolves to ::1, Astro listens
+// there, but the old probe ignored the URL host and dialled 127.0.0.1 only.
+func TestWaitPortAcceptsLocalhostOnIPv6(t *testing.T) {
+	hasIPv6Localhost := false
+	addrs, err := net.LookupIP("localhost")
+	if err == nil {
+		for _, addr := range addrs {
+			if addr.Equal(net.IPv6loopback) {
+				hasIPv6Localhost = true
+				break
+			}
+		}
+	}
+	if !hasIPv6Localhost {
+		t.Skip("localhost does not resolve to the IPv6 loopback on this machine")
+	}
+
+	ln, err := net.Listen("tcp6", "[::1]:0")
+	if err != nil {
+		t.Skipf("IPv6 loopback is unavailable: %v", err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	if !waitPort(context.Background(), "localhost", port, time.Second) {
+		t.Fatalf("localhost 沒有偵測到 IPv6 loopback 上已就緒的 %d", port)
+	}
+}
+
+func TestWaitPortAcceptsLocalhostOnIPv4(t *testing.T) {
+	ln, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Skipf("IPv4 loopback is unavailable: %v", err)
+	}
+	defer ln.Close()
+	port := ln.Addr().(*net.TCPAddr).Port
+
+	if !waitPort(context.Background(), "localhost", port, time.Second) {
+		t.Fatalf("localhost 沒有偵測到 IPv4 loopback 上已就緒的 %d", port)
 	}
 }

@@ -18,8 +18,10 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"net/url"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -269,11 +271,29 @@ func checkPorts(procs []config.Process) error {
 }
 
 func portInUse(port int) bool {
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
-		return true
+	for _, endpoint := range []struct {
+		network string
+		host    string
+	}{
+		{network: "tcp4", host: "127.0.0.1"},
+		{network: "tcp6", host: "::1"},
+	} {
+		address := net.JoinHostPort(endpoint.host, strconv.Itoa(port))
+		ln, err := net.Listen(endpoint.network, address)
+		if err == nil {
+			ln.Close()
+			continue
+		}
+
+		// An unavailable address family fails every bind and therefore does not
+		// mean this particular port is occupied. If an ephemeral bind works,
+		// however, the requested port itself really is unavailable.
+		probe, probeErr := net.Listen(endpoint.network, net.JoinHostPort(endpoint.host, "0"))
+		if probeErr == nil {
+			probe.Close()
+			return true
+		}
 	}
-	ln.Close()
 	return false
 }
 
@@ -287,7 +307,7 @@ func openWhenReady(ctx context.Context, c *config.Config, p *ui.Printer, procs [
 	}
 
 	if port > 0 {
-		if !waitPort(ctx, port, readyTimeout) {
+		if !waitPort(ctx, readyHostFor(url, port), port, readyTimeout) {
 			// Cancelled means the session is being torn down — a process
 			// exited or Ctrl+C arrived — and the port never answering is a
 			// consequence of that, not a second thing that went wrong.
@@ -354,6 +374,24 @@ func waitPortFor(c *config.Config, url string, procs []config.Process) int {
 	return firstReadyPort(procs)
 }
 
+// readyHostFor keeps the readiness probe on the same loopback address as the
+// URL when the URL itself supplied the ready port. This matters on machines
+// where localhost resolves to ::1 and a dev server listens on IPv6 only.
+//
+// A ready port supplied by a process or dev.port for a remote URL has no host
+// of its own, so localhost is the only useful default; Go's dialer then tries
+// the loopback addresses available on that machine.
+func readyHostFor(rawURL string, readyPort int) string {
+	if config.LoopbackPort(rawURL) != readyPort {
+		return "localhost"
+	}
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Hostname() == "" {
+		return "localhost"
+	}
+	return u.Hostname()
+}
+
 func firstReadyPort(procs []config.Process) int {
 	for _, proc := range procs {
 		if rp := proc.ReadyPort(); rp != 0 {
@@ -398,18 +436,26 @@ func openHint(c *config.Config) string {
 		"http://localhost:8080/console")
 }
 
-func waitPort(ctx context.Context, port int, timeout time.Duration) bool {
+func waitPort(ctx context.Context, host string, port int, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
+	address := net.JoinHostPort(host, strconv.Itoa(port))
+	dialer := net.Dialer{Timeout: time.Second}
 	for time.Now().Before(deadline) {
 		if ctx.Err() != nil {
 			return false
 		}
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), time.Second)
+		conn, err := dialer.DialContext(ctx, "tcp", address)
 		if err == nil {
 			conn.Close()
 			return true
 		}
-		time.Sleep(250 * time.Millisecond)
+		timer := time.NewTimer(250 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return false
+		case <-timer.C:
+		}
 	}
 	return false
 }
