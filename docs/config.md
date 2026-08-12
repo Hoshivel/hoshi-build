@@ -148,6 +148,13 @@ dev:
 `dev.port` 與 `dev.open` **同時設定但指向不同的埠會被擋下來**：那種寫法
 必然有一個鍵不生效，而它不生效的時候沒有任何輸出會說。
 
+開啟網址自己提供就緒埠時，檢查會沿用它的 loopback 主機：
+`localhost` 依系統解析結果與可用的 address family 探測，明寫
+`127.0.0.1` 或 `::1` 時則探測那個位址。就緒埠來自其他設定時使用
+`localhost`。
+這不會假設 `localhost` 一定是 IPv4；Windows 上的 Vite／Astro 可能只監聽
+IPv6 loopback。啟動前的埠占用檢查同樣會檢查兩種 loopback。
+
 > **註**：就緒埠原本取的是「第一個宣告了埠的行程」，與 `-open` 實際要開的
 > 網址無關。SR 的 backend 宣告 `[8080, 8081]`、frontend 宣告 `[5173]`，
 > 而 `open` 指向 5173——於是它**等 8080、開 5173**。實測 backend 起來後
