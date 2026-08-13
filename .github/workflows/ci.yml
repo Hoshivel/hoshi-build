@@ -62,16 +62,22 @@ jobs:
       - name: hoshi build
         run: go run ./cmd/hoshi build
 
-  # 安全掃描接在基礎驗證之後：`verify` 紅燈時整組 **skipped**，
-  # 而不是拿一份編譯不過的原始碼去跑四十分鐘的 CodeQL，再收到一顆
-  # 與根因無關的第二紅燈。掃描本身的定義在 `security.yml`，
-  # 那支同時還掛著每週排程（**不**經過這道閘）。
+  # **本倉庫是公開的，所以掃描與 `verify` 同時起跑**，不等它綠燈。
   #
-  # 不必再寫一次草稿 PR 的 `if`：`verify` 因為草稿而 skipped 時，
-  # `needs:` 它的 job 一併 skipped。
+  # 公開倉庫的 Actions 分鐘數不計費，所以「基礎驗證紅燈時整組 skipped、
+  # 省下執行器時間」在這裡換不到任何東西，只換到更晚才知道掃描的結論。
+  # 代價要講清楚：建置壞掉時 CodeQL 的 autobuild 與 govulncheck 會吐同一個
+  # 編譯錯誤換一種包裝，所以一顆真的紅燈會伴隨幾顆指向同一個根因的紅燈。
+  #
+  # **私有倉庫維持 `needs:` 那道閘**——那裡的分鐘數要付錢。兩種形狀是刻意的，
+  # 不是漂移；判準與理由見 workspace `AGENTS.md` §1.9.1。
+  #
+  # 掃描本身的定義在 `security.yml`，那支同時還掛著每週排程。
   security:
+    # 草稿 PR 不跑。**這一行不能省**：沒有 `needs:` 之後，草稿的 skip 不再從
+    # 基礎驗證那邊傳遞過來，少了它草稿 PR 會開始跑掃描。
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     name: 安全掃描
-    needs: [verify]
     uses: ./.github/workflows/security.yml
     permissions:
       contents: read
