@@ -156,11 +156,15 @@ dev:
 IPv6 loopback。啟動前的埠占用檢查同樣會檢查兩種 loopback。
 
 > **註**：就緒埠原本取的是「第一個宣告了埠的行程」，與 `-open` 實際要開的
-> 網址無關。SR 的 backend 宣告 `[8080, 8081]`、frontend 宣告 `[5173]`，
-> 而 `open` 指向 5173——於是它**等 8080、開 5173**。實測 backend 起來後
-> 瀏覽器就開了，而 vite 還要六秒才在聽，使用者拿到的是一個連不上的分頁。
-> 平常看起來正常只是因為 vite 通常比 `go run`（含編譯）快，那是運氣。
-> 綁在網址上是把這個可能性消掉，不是把順序調一調。
+> 網址無關。當時某個 go-npm 倉庫的 backend 宣告 `[8080, 8081]`、frontend
+> 宣告 `[5173]`，而 `open` 指向 5173——於是它**等 8080、開 5173**。實測
+> backend 起來後瀏覽器就開了，而 vite 還要六秒才在聽，使用者拿到的是一個
+> 連不上的分頁。平常看起來正常只是因為 vite 通常比 `go run`（含編譯）快，
+> 那是運氣。綁在網址上是把這個可能性消掉，不是把順序調一調。
+>
+> （那三個號碼此後都改過了，這裡保留當時的值，因為它們是這件事發生時的
+> 實況。使用本工具的倉庫怎麼分配埠不是本工具的事：本工具認得 `type`，
+> 不認得倉庫名。）
 
 **沒設定 `dev.processes` 時的預設值**：
 
@@ -325,16 +329,16 @@ test:
   scripts: [typecheck, build]
 
 dev:
-  open: http://localhost:5173
+  open: http://localhost:26603
   processes:
     - name: backend
       dir: backend
       run: go run ./cmd/server
-      ports: [8080, 8081]
+      ports: [26600, 26601]
     - name: frontend
       dir: frontend
       run: npm run dev
-      ports: [5173]
+      ports: [26603]
 
 clean:
   extra:
