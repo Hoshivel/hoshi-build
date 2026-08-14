@@ -62,6 +62,22 @@ jobs:
       - name: hoshi build
         run: go run ./cmd/hoshi build
 
+  verify-windows-dev:
+    # Windows 的 Job Object 與 CTRL_BREAK 行為無法靠交叉編譯驗證；這組測試會真的
+    # 啟動父／子／孫行程，確認優雅中斷、五秒強制期限、外層 hoshi 異常死亡，以及
+    # 最後連接埠是否確實釋放。草稿 PR 一樣不跑。
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Windows dev 行程收尾
+        run: go test ./internal/dev -count=1
+
   # **本倉庫是公開的，所以掃描與 `verify` 同時起跑**，不等它綠燈。
   #
   # 公開倉庫的 Actions 分鐘數不計費，所以「基礎驗證紅燈時整組 skipped、
