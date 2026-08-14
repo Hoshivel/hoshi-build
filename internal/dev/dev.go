@@ -12,14 +12,12 @@
 package dev
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net"
 	"net/url"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -38,6 +36,10 @@ type Options struct {
 	Args    []string // extra arguments appended to the first process
 	NoCheck bool     // skip the port availability check
 }
+
+// processStopGrace is how long a dev child gets to handle the platform's
+// graceful interrupt before its managed process group is forced down.
+const processStopGrace = 5 * time.Second
 
 // Run starts every selected process and waits for them.
 func Run(ctx context.Context, c *config.Config, p *ui.Printer, opts Options) error {
@@ -187,26 +189,28 @@ func portNote(proc config.Process) string {
 // runProcess starts one child and streams its output with a prefix.
 func runProcess(ctx context.Context, c *config.Config, p *ui.Printer, proc config.Process, colour int) error {
 	dir := filepath.Join(c.Root, filepath.FromSlash(proc.Dir))
-	cmd := exec.CommandContext(ctx, proc.Run[0], proc.Run[1:]...)
+	cmd, finishProcess, err := processCommand(ctx, proc.Run[0], proc.Run[1:]...)
+	if err != nil {
+		return fmt.Errorf("%s 啟動失敗：%w", proc.Name, err)
+	}
 	cmd.Dir = dir
 	if len(proc.Env) > 0 {
 		cmd.Env = append(environ(), proc.Env...)
 	}
-	// Kill the whole child process group, not just the direct child: `npm run
-	// dev` is a shim that spawns the real server, and killing only the shim
-	// leaves the server holding the port.
-	setProcessGroup(cmd)
 
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
+	// Give os/exec ownership of the output-copy goroutines by assigning writers
+	// instead of calling StdoutPipe / StderrPipe ourselves. That distinction is
+	// what makes Cmd.WaitDelay real: Wait can close os/exec's pipes after the
+	// grace period even when a grandchild inherited them. The former ordering —
+	// wait for our scanners, then call Wait — could never reach WaitDelay while
+	// such a grandchild was still alive.
+	stdout := newPrefixedWriter(p, proc.Name, colour)
+	stderr := newPrefixedWriter(p, proc.Name, colour)
+	cmd.Stdout = stdout
+	cmd.Stderr = stderr
 
 	if err := cmd.Start(); err != nil {
+		_ = finishProcess()
 		// The first process to end cancels ctx for everybody, and a process
 		// still waiting to be started then fails with context.Canceled. That is
 		// the teardown arriving, not a broken command line — reporting it would
@@ -219,17 +223,20 @@ func runProcess(ctx context.Context, c *config.Config, p *ui.Printer, proc confi
 	}
 	p.OK("%s 已啟動（PID %d）", proc.Name, cmd.Process.Pid)
 
-	// Both streams are prefixed the same way. cmd.Wait closes the pipes, so
-	// both pumps must finish first or their tail is lost.
-	var pumps sync.WaitGroup
-	pumps.Add(2)
-	go func() { defer pumps.Done(); pump(p, proc.Name, colour, stdout) }()
-	go func() { defer pumps.Done(); pump(p, proc.Name, colour, stderr) }()
-	pumps.Wait()
-
+	// Wait also waits for os/exec's stdout/stderr copies. Flush only afterwards,
+	// when no Write can race it, so a final line without a newline is retained.
 	err = cmd.Wait()
+	finishErr := finishProcess()
+	stdout.Flush()
+	stderr.Flush()
 	if ctx.Err() != nil {
+		if finishErr != nil {
+			p.Warn("%s 行程群組清理失敗：%v", proc.Name, finishErr)
+		}
 		return nil // torn down on purpose
+	}
+	if finishErr != nil {
+		return fmt.Errorf("%s 行程群組清理失敗：%w", proc.Name, finishErr)
 	}
 	if err != nil {
 		return fmt.Errorf("%s 結束：%w", proc.Name, err)
@@ -238,12 +245,73 @@ func runProcess(ctx context.Context, c *config.Config, p *ui.Printer, proc confi
 	return nil
 }
 
-// pump copies a child's output, one prefixed line at a time.
-func pump(p *ui.Printer, name string, colour int, src io.Reader) {
-	scanner := bufio.NewScanner(src)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		p.Prefixed(name, colour, scanner.Text())
+// prefixedWriter turns arbitrary process-output chunks into tagged lines.
+//
+// os/exec calls each writer from one copy goroutine, but the lock also makes
+// direct use in tests and a future shared stdout/stderr writer safe. Pending
+// data is capped: a program that writes forever without a newline must not make
+// the build tool grow forever (or stop draining the pipe, as Scanner did after
+// its token limit).
+type prefixedWriter struct {
+	mu      sync.Mutex
+	printer *ui.Printer
+	name    string
+	colour  int
+	pending []byte
+}
+
+const maxPrefixedLine = 1024 * 1024
+
+func newPrefixedWriter(p *ui.Printer, name string, colour int) *prefixedWriter {
+	return &prefixedWriter{printer: p, name: name, colour: colour}
+}
+
+func (w *prefixedWriter) Write(chunk []byte) (int, error) {
+	n := len(chunk)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	for len(chunk) > 0 {
+		if newline := bytes.IndexByte(chunk, '\n'); newline >= 0 {
+			w.append(chunk[:newline])
+			w.emit()
+			chunk = chunk[newline+1:]
+			continue
+		}
+		w.append(chunk)
+		break
+	}
+	return n, nil
+}
+
+func (w *prefixedWriter) append(chunk []byte) {
+	for len(chunk) > 0 {
+		if len(w.pending) == maxPrefixedLine {
+			w.emit()
+		}
+		room := maxPrefixedLine - len(w.pending)
+		if room > len(chunk) {
+			room = len(chunk)
+		}
+		w.pending = append(w.pending, chunk[:room]...)
+		chunk = chunk[room:]
+	}
+}
+
+func (w *prefixedWriter) emit() {
+	line := w.pending
+	if len(line) > 0 && line[len(line)-1] == '\r' {
+		line = line[:len(line)-1]
+	}
+	w.printer.Prefixed(w.name, w.colour, string(line))
+	w.pending = w.pending[:0]
+}
+
+func (w *prefixedWriter) Flush() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if len(w.pending) > 0 {
+		w.emit()
 	}
 }
 

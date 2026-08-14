@@ -13,6 +13,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/hoshivel/hoshi-build/internal/dev"
 	"github.com/hoshivel/hoshi-build/internal/ui"
 )
 
@@ -66,6 +67,9 @@ dev：
 `
 
 func main() {
+	if handled, code := dev.MaybeRunProcessHelper(os.Args[1:]); handled {
+		os.Exit(code)
+	}
 	if err := dispatch(os.Args[1:]); err != nil {
 		if !errors.Is(err, errAlreadyReported) {
 			ui.New(os.Stdout, os.Stderr, false).Error("%v", err)

@@ -16,6 +16,13 @@ import (
 	"github.com/hoshivel/hoshi-build/internal/ui"
 )
 
+func TestMain(m *testing.M) {
+	if handled, code := MaybeRunProcessHelper(os.Args[1:]); handled {
+		os.Exit(code)
+	}
+	os.Exit(m.Run())
+}
+
 func repo(t *testing.T, body string, files map[string]string) *config.Config {
 	t.Helper()
 	root := t.TempDir()
@@ -42,6 +49,58 @@ func requireUnix(t *testing.T) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("這些測試用 sh 當替身行程")
+	}
+}
+
+func TestPrefixedWriterHandlesChunksCRLFAndFinalTail(t *testing.T) {
+	var out bytes.Buffer
+	w := newPrefixedWriter(ui.New(&out, &out, false), "worker", 0)
+
+	for _, chunk := range [][]byte{
+		[]byte("first\r"),
+		[]byte("\nsecond\nthird"),
+		[]byte("-tail"),
+	} {
+		if n, err := w.Write(chunk); err != nil || n != len(chunk) {
+			t.Fatalf("Write() = %d, %v; want %d, nil", n, err, len(chunk))
+		}
+	}
+	w.Flush()
+
+	text := out.String()
+	for _, want := range []string{
+		"worker   │ first\n",
+		"worker   │ second\n",
+		"worker   │ third-tail\n",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("輸出少了 %q：\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "\r") {
+		t.Errorf("CRLF 的 CR 漏進輸出：%q", text)
+	}
+}
+
+func TestPrefixedWriterBoundsLinesWithoutNewlines(t *testing.T) {
+	var out bytes.Buffer
+	w := newPrefixedWriter(ui.New(&out, &out, false), "long", 0)
+	data := bytes.Repeat([]byte{'x'}, maxPrefixedLine+37)
+
+	if _, err := w.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(w.pending); got != 37 {
+		t.Fatalf("pending = %d, want 37（超長行應先送出一塊）", got)
+	}
+	w.Flush()
+
+	text := out.String()
+	if got := strings.Count(text, "long     │ "); got != 2 {
+		t.Errorf("前綴行數 = %d, want 2", got)
+	}
+	if got := strings.Count(text, "x"); got != len(data) {
+		t.Errorf("輸出的 x = %d, want %d", got, len(data))
 	}
 }
 
