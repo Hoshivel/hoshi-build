@@ -73,6 +73,16 @@ permissions:
 
 jobs:
   codeql:
+    # 這一種在 PR 上不跑（裁示 2026-08-16）：找到的東西是「修一次就結束」的，
+    # 在 PR 攔下與在 `main` 攔下代價一樣。Gitleaks 沒有這一行——它是例外，
+    # 理由見 `ci.yml` 的 `security` job。
+    #
+    # 用 `!= 'pull_request'` 而不是 `== 'push'`：後者會順手把排程與
+    # `workflow_dispatch` 的手動掃描也關掉，而那兩個都是要用的。
+    #
+    # 被 `ci.yml` 呼叫時，這裡讀到的 `github.event_name` 是**呼叫端的**事件，
+    # 所以這個判斷成立。
+    if: github.event_name != 'pull_request'
     name: CodeQL (${{ matrix.language }})
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -133,6 +143,16 @@ jobs:
           if-no-files-found: warn
 
   govulncheck:
+    # 這一種在 PR 上不跑（裁示 2026-08-16）：找到的東西是「修一次就結束」的，
+    # 在 PR 攔下與在 `main` 攔下代價一樣。Gitleaks 沒有這一行——它是例外，
+    # 理由見 `ci.yml` 的 `security` job。
+    #
+    # 用 `!= 'pull_request'` 而不是 `== 'push'`：後者會順手把排程與
+    # `workflow_dispatch` 的手動掃描也關掉，而那兩個都是要用的。
+    #
+    # 被 `ci.yml` 呼叫時，這裡讀到的 `github.event_name` 是**呼叫端的**事件，
+    # 所以這個判斷成立。
+    if: github.event_name != 'pull_request'
     name: govulncheck
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -256,6 +276,16 @@ jobs:
           if-no-files-found: warn
 
   trivy:
+    # 這一種在 PR 上不跑（裁示 2026-08-16）：找到的東西是「修一次就結束」的，
+    # 在 PR 攔下與在 `main` 攔下代價一樣。Gitleaks 沒有這一行——它是例外，
+    # 理由見 `ci.yml` 的 `security` job。
+    #
+    # 用 `!= 'pull_request'` 而不是 `== 'push'`：後者會順手把排程與
+    # `workflow_dispatch` 的手動掃描也關掉，而那兩個都是要用的。
+    #
+    # 被 `ci.yml` 呼叫時，這裡讀到的 `github.event_name` 是**呼叫端的**事件，
+    # 所以這個判斷成立。
+    if: github.event_name != 'pull_request'
     name: Trivy
     runs-on: ubuntu-latest
     timeout-minutes: 25

@@ -88,13 +88,22 @@ jobs:
   #
   # 掃描本身的定義在 `security.yml`，那支同時還掛著每週排程。
   security:
-    # **只在 main（與手動）跑，PR 上不掃。** 掃描找到的東西是「處理一次就
-    # 結束」的那一類，不是每個 PR 都要重新確認一次的；而它是這條流水線上
-    # 最慢的一段，掛在 PR 上換到的回饋遠少於它拖長的等待。
+    # **這一組在 PR 上也跑，但裡面只有 Gitleaks 會動**（裁示 2026-08-16）。
     #
-    # 用 `!= 'pull_request'` 而不是 `== 'push'`：後者會順手把
-    # `workflow_dispatch` 的手動掃描也關掉，而那是要用的。
-    if: github.event_name != 'pull_request'
+    # 判準是「漏到 `main` 之後要付什麼」：
+    #
+    # | | 補救 |
+    # |---|---|
+    # | CodeQL／govulncheck／Trivy | **修程式**，修好就結束 |
+    # | **Gitleaks** | 刪掉不夠——憑證已經在 git 歷史裡，**必須輪替** |
+    #
+    # 前三種在 PR 攔下與在 `main` 攔下代價一樣，所以留在 `main`（省下每個 PR
+    # 數分鐘）；Gitleaks 是唯一代價不同的，所以掛回 PR。
+    #
+    # **閘門下移到被呼叫的那三個 job 上**（`security.yml` 裡各自的
+    # `if: github.event_name != 'pull_request'`），不是留在這裡——留在這裡會把
+    # Gitleaks 一起關掉。這樣做同時保住了檢查名稱：它仍然是
+    # `安全掃描 / Gitleaks`，按名字釘住的分支保護不受影響。
     name: 安全掃描
     # 閘門對公開倉庫也成立了（裁示 2026-08-16）：掃描要先等基礎驗證綠。
     # 取代 workspace decisions/infrastructure/公開倉庫的掃描不經閘門.md
