@@ -73,16 +73,18 @@ permissions:
 
 jobs:
   codeql:
-    # 這一種在 PR 上不跑（裁示 2026-08-16）：找到的東西是「修一次就結束」的，
-    # 在 PR 攔下與在 `main` 攔下代價一樣。Gitleaks 沒有這一行——它是例外，
-    # 理由見 `ci.yml` 的 `security` job。
+    # **在 PR 上也跑**（裁示 2026-08-21）。
     #
-    # 用 `!= 'pull_request'` 而不是 `== 'push'`：後者會順手把排程與
-    # `workflow_dispatch` 的手動掃描也關掉，而那兩個都是要用的。
+    # 這裡從 2026-08-16 起有一條 `if: github.event_name != 'pull_request'`，
+    # 理由是「找到的東西是修一次就結束的，在 PR 攔下與在 `main` 攔下代價一樣，
+    # 所以省下每個 PR 數分鐘」。**那句話的前半仍然成立，後半不再是收益**：
+    # 升上 Enterprise 之後分鐘數不是稀缺的東西了。
     #
-    # 被 `ci.yml` 呼叫時，這裡讀到的 `github.event_name` 是**呼叫端的**事件，
-    # 所以這個判斷成立。
-    if: github.event_name != 'pull_request'
+    # 而代價一直都在：一個在 `main` 才被攔下的問題，是一個**已經合併**的問題。
+    # 判準因此收斂成一句——**CI 做得到的驗證，就讓它在合併前跑。**
+    #
+    # 每週排程仍然留著，它回答的是另一個問題：**沒有動過的程式**今天有沒有
+    # 變成有問題的（見上方 `on:` 的註解）。
     name: CodeQL (${{ matrix.language }})
     runs-on: ubuntu-latest
     timeout-minutes: 40
@@ -143,16 +145,18 @@ jobs:
           if-no-files-found: warn
 
   govulncheck:
-    # 這一種在 PR 上不跑（裁示 2026-08-16）：找到的東西是「修一次就結束」的，
-    # 在 PR 攔下與在 `main` 攔下代價一樣。Gitleaks 沒有這一行——它是例外，
-    # 理由見 `ci.yml` 的 `security` job。
+    # **在 PR 上也跑**（裁示 2026-08-21）。
     #
-    # 用 `!= 'pull_request'` 而不是 `== 'push'`：後者會順手把排程與
-    # `workflow_dispatch` 的手動掃描也關掉，而那兩個都是要用的。
+    # 這裡從 2026-08-16 起有一條 `if: github.event_name != 'pull_request'`，
+    # 理由是「找到的東西是修一次就結束的，在 PR 攔下與在 `main` 攔下代價一樣，
+    # 所以省下每個 PR 數分鐘」。**那句話的前半仍然成立，後半不再是收益**：
+    # 升上 Enterprise 之後分鐘數不是稀缺的東西了。
     #
-    # 被 `ci.yml` 呼叫時，這裡讀到的 `github.event_name` 是**呼叫端的**事件，
-    # 所以這個判斷成立。
-    if: github.event_name != 'pull_request'
+    # 而代價一直都在：一個在 `main` 才被攔下的問題，是一個**已經合併**的問題。
+    # 判準因此收斂成一句——**CI 做得到的驗證，就讓它在合併前跑。**
+    #
+    # 每週排程仍然留著，它回答的是另一個問題：**沒有動過的程式**今天有沒有
+    # 變成有問題的（見上方 `on:` 的註解）。
     name: govulncheck
     runs-on: ubuntu-latest
     timeout-minutes: 25
@@ -276,16 +280,18 @@ jobs:
           if-no-files-found: warn
 
   trivy:
-    # 這一種在 PR 上不跑（裁示 2026-08-16）：找到的東西是「修一次就結束」的，
-    # 在 PR 攔下與在 `main` 攔下代價一樣。Gitleaks 沒有這一行——它是例外，
-    # 理由見 `ci.yml` 的 `security` job。
+    # **在 PR 上也跑**（裁示 2026-08-21）。
     #
-    # 用 `!= 'pull_request'` 而不是 `== 'push'`：後者會順手把排程與
-    # `workflow_dispatch` 的手動掃描也關掉，而那兩個都是要用的。
+    # 這裡從 2026-08-16 起有一條 `if: github.event_name != 'pull_request'`，
+    # 理由是「找到的東西是修一次就結束的，在 PR 攔下與在 `main` 攔下代價一樣，
+    # 所以省下每個 PR 數分鐘」。**那句話的前半仍然成立，後半不再是收益**：
+    # 升上 Enterprise 之後分鐘數不是稀缺的東西了。
     #
-    # 被 `ci.yml` 呼叫時，這裡讀到的 `github.event_name` 是**呼叫端的**事件，
-    # 所以這個判斷成立。
-    if: github.event_name != 'pull_request'
+    # 而代價一直都在：一個在 `main` 才被攔下的問題，是一個**已經合併**的問題。
+    # 判準因此收斂成一句——**CI 做得到的驗證，就讓它在合併前跑。**
+    #
+    # 每週排程仍然留著，它回答的是另一個問題：**沒有動過的程式**今天有沒有
+    # 變成有問題的（見上方 `on:` 的註解）。
     name: Trivy
     runs-on: ubuntu-latest
     timeout-minutes: 25

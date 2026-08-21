@@ -9,12 +9,17 @@ name: CI
 on:
   push:
     branches: [main]
-  # 開了 PR 就在合併前先驗一次，但**草稿不跑**（下面每個 job 的 `if`）。
-  # 迭代期間開成 draft，改好再標 ready for review——那一刻才觸發。
+  # 開了 PR 就在合併前先驗一次，**草稿也跑**（裁示 2026-08-21）。
   #
-  # 這與「工作分支的頻繁推送不該花 CI」並不衝突：沒有開 PR 的分支不會觸發，
-  # 開了 PR 但還是草稿的也不會。換到的是**合併前就知道壞了**，
-  # 而不是像 2026-08-08 那次要等合併後才發現 hoshi-deploy 是紅的。
+  # 沒有開 PR 的分支仍然不會觸發，所以「工作分支的頻繁推送不該花 CI」照舊
+  # 成立；改掉的是草稿那一段。草稿不跑換到的是迭代期間省下的分鐘數，而升上
+  # Enterprise 之後那不是收益；付出的是**最需要早點知道的那個階段沒有網子**。
+  #
+  # > **註**：這段註解在 2026-08-21 之前寫著「草稿不跑（下面每個 job 的
+  # > `if`）」，而那個 `if` **十五個倉庫裡只有兩個真的有**（hoshi-build 與
+  # > hoshi-standards）。也就是說十三個倉庫的草稿 PR 一直都在跑 CI，
+  # > 註解描述的是一件沒有發生的事。它的方向是「以為更省」，
+  # > 所以不會有任何帳單或紅燈讓人發現它——**一份說謊的註解不會自己壞掉**。
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
@@ -60,11 +65,58 @@ jobs:
       - name: hoshi build
         run: go run ./cmd/hoshi build
 
+      # **覆蓋率：量出來、報出來，不設下限。**
+      #
+      # 2026-08-21 之前**沒有任何倉庫量過**——十五個倉庫的 workflow 裡
+      # `-coverprofile` 一次都沒有出現。一個沒有人看過的數字不會自己變好，
+      # 但更要緊的是：**沒有量的時候，覆蓋率掉下去是沒有症狀的。**
+      #
+      # 刻意**不設下限**。當天量到的十個 Go 倉庫是 42.5%～81.6%，跨度太大，
+      # 一個統一的數字要嘛擋不住任何東西、要嘛讓兩個倉庫從第一天起就紅——
+      # 而一個永遠紅著的檢查等於沒有檢查。下限等使用者看過真實數字再定，
+      # 追蹤在 workspace `todo/CI-覆蓋率-把-CI-做得到的全部跑起來.md`。
+      #
+      # **這個數字不含環境相依的那幾層**（要真的資料庫／瀏覽器／服務的那些，
+      # 見同倉庫其他 workflow）。它量的是這個 job 裡跑得到的部分，
+      # 所以它會比「所有測試都跑起來」的覆蓋率低——不要把它讀成後者。
+      - name: 覆蓋率
+        run: |
+          set -euo pipefail
+          go test -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+          total=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}')
+          echo "總覆蓋率：${total}"
+          {
+            echo "### 測試覆蓋率"
+            echo
+            echo "本 job 跑得到的部分：**${total}**"
+            echo
+            echo "> 不含環境相依的那幾層（真的資料庫／瀏覽器／服務），那些有自己的 workflow。"
+            echo
+            echo '<details><summary>逐套件</summary>'
+            echo
+            echo '```'
+            go tool cover -func=coverage.out
+            echo '```'
+            echo
+            echo '</details>'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: 保留覆蓋率報告
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: coverage.out
+          retention-days: 30
+          if-no-files-found: warn
+
   verify-windows-dev:
     # Windows 的 Job Object 與 CTRL_BREAK 行為無法靠交叉編譯驗證；這組測試會真的
     # 啟動父／子／孫行程，確認優雅中斷、五秒強制期限、外層 hoshi 異常死亡，以及
-    # 最後連接埠是否確實釋放。草稿 PR 一樣不跑。
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # 最後連接埠是否確實釋放。
+    #
+    # **草稿 PR 也跑**（裁示 2026-08-21）：這裡原本有一條
+    # `if: … || github.event.pull_request.draft == false`。見上方 `on:` 的註解。
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -76,17 +128,19 @@ jobs:
       - name: Windows dev 行程收尾
         run: go test ./internal/dev -count=1
 
-  # **本倉庫是公開的，所以掃描與 `verify` 同時起跑**，不等它綠燈。
+  # 安全掃描接在基礎驗證之後：基礎驗證紅燈時整組 **skipped**，而不是拿一份
+  # 編譯不過的原始碼去跑掃描，再收到一顆與根因無關的第二紅燈。
   #
-  # 公開倉庫的 Actions 分鐘數不計費，所以「基礎驗證紅燈時整組 skipped、
-  # 省下執行器時間」在這裡換不到任何東西，只換到更晚才知道掃描的結論。
-  # 代價要講清楚：建置壞掉時 CodeQL 的 autobuild 與 govulncheck 會吐同一個
-  # 編譯錯誤換一種包裝，所以一顆真的紅燈會伴隨幾顆指向同一個根因的紅燈。
+  # > **註**：這段文字到 2026-08-21 為止寫的是「**本倉庫是公開的，所以掃描與
+  # > 基礎驗證同時起跑**，不等它綠燈」，理由是公開倉庫的 Actions 分鐘數不計費。
+  # > 那個形狀在 2026-08-16 就被取代了，而**取代它的 `needs:` 一直都在**
+  # > （就在下面幾行，還帶著自己的註解）——沒有跟上的只有這段文字。
+  # >
+  # > 它還聲明「兩種形狀是刻意的，不是漂移；判準見 workspace `AGENTS.md`
+  # > §1.9.1」，而 §1.9.1 說的正好相反。**一段指著條文說自己不必照辦的註解，
+  # > 比沒有註解更糟**：它讓讀者以為這裡已經對照過了，於是沒有人去比對。
   #
-  # **私有倉庫維持 `needs:` 那道閘**——那裡的分鐘數要付錢。兩種形狀是刻意的，
-  # 不是漂移；判準與理由見 workspace `AGENTS.md` §1.9.1。
-  #
-  # 掃描本身的定義在 `security.yml`，那支同時還掛著每週排程。
+  # 掃描本身的定義在 `security.yml`，那支同時還掛著每週排程（**不**經過這道閘）。
   security:
     # **這一組在 PR 上也跑，但裡面只有 Gitleaks 會動**（裁示 2026-08-16）。
     #
