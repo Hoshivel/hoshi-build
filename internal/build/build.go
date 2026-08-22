@@ -39,9 +39,14 @@ type Result struct {
 
 // Artifact is one thing that landed in the output directory.
 type Artifact struct {
-	Path    string        // absolute
-	Target  config.Target // zero value for type: npm
-	IsDir   bool
+	Path   string        // absolute
+	Target config.Target // zero value for type: npm
+	IsDir  bool
+	// Bin is the absolute path of the program binary, empty when there is
+	// none (type: npm). Archiving needs it because the executable bit it has
+	// to preserve cannot always be read back off the host filesystem — see
+	// makeArchive.
+	Bin     string
 	Archive string // absolute path of the archive, when one was made
 	Verify  VerifyResult
 }
@@ -180,6 +185,8 @@ func (b *builder) buildTarget(ctx context.Context, t config.Target, version stri
 		art.Path = binPath
 	}
 
+	art.Bin = binPath
+
 	b.ui.Step("go build %s", t)
 	if err := b.buildGo(ctx, t, binPath, version); err != nil {
 		return nil, err
@@ -294,7 +301,7 @@ func (b *builder) archiveAll(result *Result) error {
 		if art.IsDir {
 			prefix = filepath.Base(art.Path)
 		}
-		if err := makeArchive(format, art.Path, dst, prefix); err != nil {
+		if err := makeArchive(format, art.Path, dst, prefix, art.Bin); err != nil {
 			return err
 		}
 		art.Archive = dst

@@ -9,12 +9,17 @@ name: CI
 on:
   push:
     branches: [main]
-  # 開了 PR 就在合併前先驗一次，但**草稿不跑**（下面每個 job 的 `if`）。
-  # 迭代期間開成 draft，改好再標 ready for review——那一刻才觸發。
+  # 開了 PR 就在合併前先驗一次，**草稿也跑**（裁示 2026-08-21）。
   #
-  # 這與「工作分支的頻繁推送不該花 CI」並不衝突：沒有開 PR 的分支不會觸發，
-  # 開了 PR 但還是草稿的也不會。換到的是**合併前就知道壞了**，
-  # 而不是像 2026-08-08 那次要等合併後才發現 hoshi-deploy 是紅的。
+  # 沒有開 PR 的分支仍然不會觸發，所以「工作分支的頻繁推送不該花 CI」照舊
+  # 成立；改掉的是草稿那一段。草稿不跑換到的是迭代期間省下的分鐘數，而升上
+  # Enterprise 之後那不是收益；付出的是**最需要早點知道的那個階段沒有網子**。
+  #
+  # > **註**：這段註解在 2026-08-21 之前寫著「草稿不跑（下面每個 job 的
+  # > `if`）」，而那個 `if` **十五個倉庫裡只有兩個真的有**（hoshi-build 與
+  # > hoshi-standards）。也就是說十三個倉庫的草稿 PR 一直都在跑 CI，
+  # > 註解描述的是一件沒有發生的事。它的方向是「以為更省」，
+  # > 所以不會有任何帳單或紅燈讓人發現它——**一份說謊的註解不會自己壞掉**。
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
@@ -52,20 +57,95 @@ jobs:
       # internal/dev 有平臺相依的檔案（proc_unix.go / proc_windows.go），兩邊都要
       # 編得過。這是編譯檢查、不產出任何要部署的東西，因此不是 §3 說的那種
       # 「在 CI 裡重寫建置旗標」。
+      # **與 `verify-windows-dev` 那個原生 job 互補，不是被它取代的**：這一步問
+      # 「從 Linux 的工具鏈編不編得出來」（出貨走的就是這條路），那個 job 問
+      # 「在 Windows 上跑起來對不對」。上面那步 `hoshi build` 只編 `./cmd/hoshi`
+      # 這個 main 套件；這一步編 `./...`，涵蓋不被主程式引用的套件。
       - name: 交叉編譯檢查（windows）
         run: GOOS=windows go build ./...
 
       # 自舉其二：本工具建置它自己。`.hoshi-build.yaml` 是本倉庫自己的設定，
       # 它壞掉時最先發現的應該是本倉庫的維護者。
-      - name: hoshi build
-        run: go run ./cmd/hoshi build
+      #
+      # **五個平臺，與 `release.yml` 同一條指令、同一份清單。** 在 2026-08-22
+      # 之前這裡是不帶 `-target` 的 `hoshi build`，也就是**只建本機平臺**——
+      # README 宣告出貨五個平臺，而其中四個要等到有人發佈 release 才第一次
+      # 被編譯。那時它已經在 release 頁面上了。
+      #
+      # 清單寫死兩份（這裡與 release.yml）是刻意的取捨：`hoshi build` 沒有
+      # 「照 README 的清單建」這種輸入，而把清單放進 `.hoshi-build.yaml` 的
+      # `targets` 會改變**其他倉庫**讀這個鍵的語意。兩份要一起改。
+      - name: hoshi build（release 的五個平臺）
+        run: >
+          go run ./cmd/hoshi build
+          -target linux/amd64,linux/arm64,darwin/amd64,darwin/arm64,windows/amd64
+
+      # **覆蓋率：量出來、報出來，不設下限。**
+      #
+      # 2026-08-21 之前**沒有任何倉庫量過**——十五個倉庫的 workflow 裡
+      # `-coverprofile` 一次都沒有出現。一個沒有人看過的數字不會自己變好，
+      # 但更要緊的是：**沒有量的時候，覆蓋率掉下去是沒有症狀的。**
+      #
+      # 刻意**不設下限**。當天量到的十個 Go 倉庫是 42.5%～81.6%，跨度太大，
+      # 一個統一的數字要嘛擋不住任何東西、要嘛讓兩個倉庫從第一天起就紅——
+      # 而一個永遠紅著的檢查等於沒有檢查。下限等使用者看過真實數字再定，
+      # 追蹤在 workspace `todo/CI-覆蓋率-把-CI-做得到的全部跑起來.md`。
+      #
+      # **這個數字不含環境相依的那幾層**（要真的資料庫／瀏覽器／服務的那些，
+      # 見同倉庫其他 workflow）。它量的是這個 job 裡跑得到的部分，
+      # 所以它會比「所有測試都跑起來」的覆蓋率低——不要把它讀成後者。
+      - name: 覆蓋率
+        run: |
+          set -euo pipefail
+          go test -count=1 -covermode=atomic -coverprofile=coverage.out ./...
+          total=$(go tool cover -func=coverage.out | tail -1 | awk '{print $3}')
+          echo "總覆蓋率：${total}"
+          {
+            echo "### 測試覆蓋率"
+            echo
+            echo "本 job 跑得到的部分：**${total}**"
+            echo
+            echo "> 不含環境相依的那幾層（真的資料庫／瀏覽器／服務），那些有自己的 workflow。"
+            echo
+            echo '<details><summary>逐套件</summary>'
+            echo
+            echo '```'
+            go tool cover -func=coverage.out
+            echo '```'
+            echo
+            echo '</details>'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: 保留覆蓋率報告
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: coverage.out
+          retention-days: 30
+          if-no-files-found: warn
 
   verify-windows-dev:
-    # Windows 的 Job Object 與 CTRL_BREAK 行為無法靠交叉編譯驗證；這組測試會真的
-    # 啟動父／子／孫行程，確認優雅中斷、五秒強制期限、外層 hoshi 異常死亡，以及
-    # 最後連接埠是否確實釋放。草稿 PR 一樣不跑。
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # Windows 的 Job Object 與 CTRL_BREAK 行為無法靠交叉編譯驗證；`internal/dev`
+    # 那組測試會真的啟動父／子／孫行程，確認優雅中斷、五秒強制期限、外層 hoshi
+    # 異常死亡，以及最後連接埠是否確實釋放。
+    #
+    # **範圍 2026-08-22 從 `./internal/dev` 放寬到 `./...`。** 本倉庫有三個檔案
+    # 帶 Windows 分支，而其中 `internal/build/gobuild.go` 是**正式程式碼**——
+    # 它落在舊範圍之外，也就是說那條分支在 Windows 上從來沒有被執行過。
+    # 一個只測一個套件的 Windows job，涵蓋的是「我們記得要測的那個」，
+    # 不是「有 Windows 分支的那些」。
+    #
+    # 名稱刻意沒有跟著改（`verify-windows-dev`）：分支保護是按名字釘的。
+    #
+    # **每個指令一個步驟，不是一個多行 `run`。** windows runner 的預設 shell
+    # 是 pwsh，而 GitHub 只在最後附一句 `exit $LASTEXITCODE`——多行 run 裡
+    # 前面那幾個原生指令失敗**不會**中止腳本，只有最後一個的結束碼算數。
+    #
+    # **草稿 PR 也跑**（裁示 2026-08-21）：這裡原本有一條
+    # `if: … || github.event.pull_request.draft == false`。見上方 `on:` 的註解。
     runs-on: windows-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -73,37 +153,110 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Windows dev 行程收尾
-        run: go test ./internal/dev -count=1
+      - run: go build ./...
 
-  # **本倉庫是公開的，所以掃描與 `verify` 同時起跑**，不等它綠燈。
+      - run: go vet ./...
+
+      # 含 `internal/dev` 的行程收尾與 `internal/build` 的 Windows 分支。
+      # **不帶 `-race`**：Windows 的 race detector 要 cgo 與一支 C compiler，
+      # 而競態那一層 Linux 與 arm64 的 job 已經驗過了。
+      - run: go test ./... -count=1
+
+      # **另一個方向：從 Windows 的開發環境編得出生產執行檔嗎。**
+      #
+      # 這正是「我能不能在開發環境裡建立生產執行檔」那一問對**這個組織**的
+      # 實際形狀：開發機是 Windows，而部署目標是 Debian 13。`verify` 那個
+      # job 驗的是從 Linux 建出五個平臺，剛好是反過來的那一半。
+      #
+      # 這裡用 `hoshi build` 而不是裸的 `go build`：出貨走的就是這條路，
+      # 而它同時驗了本工具在 Windows 上算不算得對每個目標的產物名稱與旗標。
+      - name: hoshi build（從 Windows 建出五個平臺）
+        shell: bash
+        run: >
+          go run ./cmd/hoshi build
+          -target linux/amd64,linux/arm64,darwin/amd64,darwin/arm64,windows/amd64
+
+
+  # **目標平臺實跑，問的是：有沒有遺漏平臺特定語法可能造成失敗？**
+  # （裁示 2026-08-22。另一問——「我能不能在開發環境裡建立生產執行檔」——
+  # 由上面 `verify` 與 `verify-windows-dev` 裡的 `hoshi build` 回答。）
   #
-  # 公開倉庫的 Actions 分鐘數不計費，所以「基礎驗證紅燈時整組 skipped、
-  # 省下執行器時間」在這裡換不到任何東西，只換到更晚才知道掃描的結論。
-  # 代價要講清楚：建置壞掉時 CodeQL 的 autobuild 與 govulncheck 會吐同一個
-  # 編譯錯誤換一種包裝，所以一顆真的紅燈會伴隨幾顆指向同一個根因的紅燈。
+  # README 宣告出貨五個平臺，而 CI 到 2026-08-22 為止**只在其中一個上跑過**
+  # （linux/amd64）。下面兩個 job 把它補到另外兩個真的拿得到執行器的平臺上。
+  # darwin/amd64 只編不跑——GitHub 的 macOS 執行器現在都是 arm64。
   #
-  # **私有倉庫維持 `needs:` 那道閘**——那裡的分鐘數要付錢。兩種形狀是刻意的，
-  # 不是漂移；判準與理由見 workspace `AGENTS.md` §1.9.1。
+  # 兩個 runner 對公開倉庫都是免費的，而本倉庫是公開的。
+  verify-macos:
+    # darwin 是宣告出貨的平臺之一，而它的行程管理與檔案語意都與 Linux 不同
+    # ——`internal/dev` 那組測試正是在那一層。`macos-latest` 是 arm64。
+    name: macOS
+    runs-on: macos-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - run: go build ./...
+
+      - run: go vet ./...
+
+      - run: go test ./... -count=1
+
+  verify-linux-arm64:
+    # linux/arm64 也是宣告出貨的平臺。它與 amd64 的差別多半在原子操作與
+    # 記憶體順序上，而那正是交叉編譯看不到、只有真的跑起來才問得到的東西。
+    name: Linux arm64
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - run: go build ./...
+
+      - run: go vet ./...
+
+      # 這裡帶 `-race`：arm64 的 Linux 有 race detector，而 `internal/dev`
+      # 的競態正是 `-race` 抓出來的（AGENTS.md §2）。
+      - run: go test -race ./... -count=1
+
+  # 安全掃描接在基礎驗證之後：基礎驗證紅燈時整組 **skipped**，而不是拿一份
+  # 編譯不過的原始碼去跑掃描，再收到一顆與根因無關的第二紅燈。
   #
-  # 掃描本身的定義在 `security.yml`，那支同時還掛著每週排程。
+  # > **註**：這段文字到 2026-08-21 為止寫的是「**本倉庫是公開的，所以掃描與
+  # > 基礎驗證同時起跑**，不等它綠燈」，理由是公開倉庫的 Actions 分鐘數不計費。
+  # > 那個形狀在 2026-08-16 就被取代了，而**取代它的 `needs:` 一直都在**
+  # > （就在下面幾行，還帶著自己的註解）——沒有跟上的只有這段文字。
+  # >
+  # > 它還聲明「兩種形狀是刻意的，不是漂移；判準見 workspace `AGENTS.md`
+  # > §1.9.1」，而 §1.9.1 說的正好相反。**一段指著條文說自己不必照辦的註解，
+  # > 比沒有註解更糟**：它讓讀者以為這裡已經對照過了，於是沒有人去比對。
+  #
+  # 掃描本身的定義在 `security.yml`，那支同時還掛著每週排程（**不**經過這道閘）。
   security:
-    # **這一組在 PR 上也跑，但裡面只有 Gitleaks 會動**（裁示 2026-08-16）。
+    # **這一組在 PR 上全部會跑**（裁示 2026-08-21）。
     #
-    # 判準是「漏到 `main` 之後要付什麼」：
+    # 2026-08-16 到 08-21 之間只有 Gitleaks 會動，其餘三種各自帶一條
+    # `if: github.event_name != 'pull_request'`。當時的判準是「漏到 `main`
+    # 之後要付什麼」：CodeQL／govulncheck／Trivy 找到的東西**修一次就結束**，
+    # 在 PR 攔下與在 `main` 攔下代價一樣，所以省下每個 PR 數分鐘；只有
+    # Gitleaks 代價不同（憑證已經在 git 歷史裡，刪掉不夠，**必須輪替**），
+    # 所以它留在 PR。
     #
-    # | | 補救 |
-    # |---|---|
-    # | CodeQL／govulncheck／Trivy | **修程式**，修好就結束 |
-    # | **Gitleaks** | 刪掉不夠——憑證已經在 git 歷史裡，**必須輪替** |
+    # **前半仍然成立，後半不再是收益**：升上 Enterprise 之後分鐘數不是稀缺的
+    # 東西了，而代價一直都在——一個在 `main` 才被攔下的問題，是一個**已經
+    # 合併**的問題。判準因此收斂成一句：**CI 做得到的驗證，就讓它在合併前跑。**
+    # 那三條 `if` 已於 2026-08-21 從 `security.yml` 拆掉。
     #
-    # 前三種在 PR 攔下與在 `main` 攔下代價一樣，所以留在 `main`（省下每個 PR
-    # 數分鐘）；Gitleaks 是唯一代價不同的，所以掛回 PR。
-    #
-    # **閘門下移到被呼叫的那三個 job 上**（`security.yml` 裡各自的
-    # `if: github.event_name != 'pull_request'`），不是留在這裡——留在這裡會把
-    # Gitleaks 一起關掉。這樣做同時保住了檢查名稱：它仍然是
-    # `安全掃描 / Gitleaks`，按名字釘住的分支保護不受影響。
+    # **`needs: [verify]` 那道閘留著，理由與成本無關**：建置壞掉時 CodeQL 的
+    # autobuild 與 govulncheck 吐的是同一個編譯錯誤換一種包裝，多餘的紅燈會
+    # 稀釋掉真的那一顆。每週排程**不**經過它（見上方 `on:` 的註解）。
     name: 安全掃描
     # 閘門對公開倉庫也成立了（裁示 2026-08-16）：掃描要先等基礎驗證綠。
     # 取代 workspace decisions/infrastructure/公開倉庫的掃描不經閘門.md
