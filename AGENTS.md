@@ -7,12 +7,11 @@
 
 ## 0. 開工前
 
-1. 確認 `../workspace` 在場；缺少時執行
-   `git clone https://github.com/Hoshivel/workspace.git ../workspace`。
-2. 讀 `../workspace/focus.md` 與 `../workspace/AGENTS.md`；取不到就停止並說明。
-3. 待辦與日誌分別放在 `workspace/todo/hoshi-build/`、
-   `workspace/logs/hoshi-build/`；不得在本倉庫另建副本。
-4. 續接事項時沿用其分支與 PR。
+1. 讀 `../workspace/focus.md` 與 `../workspace/AGENTS.md`；缺少時先
+   `git clone https://github.com/Hoshivel/workspace.git ../workspace`，
+   取不到就停止並說明。
+2. 待辦與日誌在 `workspace/todo/hoshi-build/`、`workspace/logs/hoshi-build/`；
+   不得在本倉庫另建副本。
 
 ## 1. 入場閱讀順序
 
