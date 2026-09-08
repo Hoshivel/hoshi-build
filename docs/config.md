@@ -154,6 +154,24 @@ npm:
 Windows 執行檔加 `.exe`。archive 命名為
 `<name>-<version>[-<os>-<arch>].<ext>`；目錄產物在壓縮檔中保留頂層目錄名。
 
+### 4.1 發佈描述子
+
+每個產物旁邊多一份 `<產物名>.release.json`，形狀由發佈標準的
+`hoshi.release/v1` 定義：服務、`type`、版本、完整 commit、`dirty`、建立時間、
+目標平臺、完整 artifact sha256 與 build provenance。
+
+```text
+dist/
+  my-service-linux-amd64
+  my-service-linux-amd64.release.json
+```
+
+- 目錄產物的描述子在目錄**旁邊**，不在裡面——它記的就是那個目錄的雜湊。
+- 不進 archive，理由同上。
+- `type: npm` 不輸出：產物就是輸出目錄本身，沒有旁邊可放。
+- 設定雜湊、節點與 slot 由部署工具在綁定時補進 `deployment` 段，建置端不寫。
+- 認不出 commit 時留空，不猜；問不出工作樹狀態時記為 `dirty`。
+
 ## 5. 命令
 
 ```yaml
@@ -181,7 +199,10 @@ test:
 ## 6. 版本
 
 `version` 留空時執行 `git describe --tags --always --dirty`；無 git 資訊時使用 `dev`。
-版本寫入 archive 名稱與 `go.version_var`；不安全字元替換為 `-`。
+版本寫入 archive 名稱、`go.version_var` 與描述子的 `version`；不安全字元替換為 `-`。
+
+描述子的 `commit` 另外取自 `git rev-parse HEAD`，是完整 40 位——短 commit 會碰撞，
+而發佈是它唯一被用來判等的場合。
 
 ## 7. 格式與驗證
 

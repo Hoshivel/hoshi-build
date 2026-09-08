@@ -29,6 +29,9 @@ type Options struct {
 	SkipGo  bool
 	SkipNpm bool
 	Verify  bool
+	// ToolVersion is this program's own version, recorded as the release
+	// descriptor's build provenance.
+	ToolVersion string
 }
 
 // Result reports what a build produced, for the caller to summarise.
@@ -48,7 +51,10 @@ type Artifact struct {
 	// makeArchive.
 	Bin     string
 	Archive string // absolute path of the archive, when one was made
-	Verify  VerifyResult
+	// Descriptor is the absolute path of the release descriptor written
+	// beside this artifact, empty when none was.
+	Descriptor string
+	Verify     VerifyResult
 }
 
 type builder struct {
@@ -135,6 +141,12 @@ func Run(ctx context.Context, cfg *config.Config, p *ui.Printer, r run.Runner, o
 		}
 	}
 
+	// The descriptor is written before archiving and is not packed into the
+	// archive: it records the artifact's hash, so it cannot be one of the
+	// bytes that hash covers.
+	if err := b.writeDescriptors(ctx, result, opts.ToolVersion); err != nil {
+		return nil, err
+	}
 	if err := b.archiveAll(result); err != nil {
 		return nil, err
 	}
