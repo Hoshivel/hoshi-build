@@ -20,6 +20,9 @@ type fakeRunner struct {
 	captures map[string]string   // command string -> stdout
 	missing  map[string]bool     // executables to report as absent
 	onRun    func(run.Cmd) error // side effects, e.g. creating output
+	// failCapture makes a Capture fail, for the paths where "the tool is
+	// there but it would not answer" is a different case from "no tool".
+	failCapture map[string]bool
 }
 
 func (r *fakeRunner) Run(_ context.Context, c run.Cmd) error {
@@ -32,6 +35,9 @@ func (r *fakeRunner) Run(_ context.Context, c run.Cmd) error {
 
 func (r *fakeRunner) Capture(_ context.Context, c run.Cmd) (string, error) {
 	r.calls = append(r.calls, c)
+	if r.failCapture[c.String()] {
+		return "", os.ErrPermission
+	}
 	if out, ok := r.captures[c.String()]; ok {
 		return out, nil
 	}

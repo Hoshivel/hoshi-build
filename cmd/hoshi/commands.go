@@ -115,6 +115,8 @@ func cmdBuild(ctx context.Context, args []string) error {
 		SkipGo:  skipGo,
 		SkipNpm: skipNpm,
 		Verify:  !noVerif,
+
+		ToolVersion: version,
 	})
 	if err != nil {
 		return err
@@ -123,6 +125,9 @@ func cmdBuild(ctx context.Context, args []string) error {
 	p.Title("完成")
 	for _, art := range result.Artifacts {
 		p.OK("%s", relTo(cfg.Root, art.Path))
+		if art.Descriptor != "" {
+			p.OK("%s", relTo(cfg.Root, art.Descriptor))
+		}
 		if art.Archive != "" {
 			p.OK("%s", relTo(cfg.Root, art.Archive))
 		}

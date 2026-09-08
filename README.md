@@ -47,6 +47,9 @@ output: dist/
 
 產物形狀由 target 的檔案數決定：只有執行檔時輸出單檔；含前端或 `include` 時輸出目錄。
 
+每個產物旁邊另有一份 `<產物名>.release.json`——完整 commit 與完整 artifact sha256，
+灰度放量時用來判斷「要放的是不是驗過的那一份」。見 [`docs/config.md`](docs/config.md) §4.1。
+
 ## 強制規則
 
 - Go 建置固定使用 `CGO_ENABLED=0`、`-mod=readonly`、`-trimpath` 與
