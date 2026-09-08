@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -149,6 +150,13 @@ func TestDirectoryDescriptorSitsBesideNotInside(t *testing.T) {
 // hoshi-deploy already names release directories after. If it does not, every
 // artifact reads as a mismatch from the first day.
 func TestDirectoryDigestMatchesTheShellPipeline(t *testing.T) {
+	// Deployment targets Linux, and that is whose pipeline this reproduces.
+	// On Windows `find` and `sort` resolve to the System32 programs of those
+	// names, which are different tools entirely — the comparison would not be
+	// a weaker version of this check, it would be a different one.
+	if runtime.GOOS == "windows" {
+		t.Skip("節點是 Linux；這一條比的是節點上那條管線")
+	}
 	for _, tool := range []string{"sh", "find", "sort", "xargs", "sha256sum"} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("沒有 %s，跳過與 shell 管線的交叉驗證", tool)
