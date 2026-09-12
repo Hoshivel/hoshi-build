@@ -116,7 +116,7 @@ func cmdBuild(ctx context.Context, args []string) error {
 		SkipNpm: skipNpm,
 		Verify:  !noVerif,
 
-		ToolVersion: version,
+		ToolVersion: toolVersion(),
 	})
 	if err != nil {
 		return err
