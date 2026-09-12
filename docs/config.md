@@ -33,6 +33,7 @@ output: dist/
 | `targets` | list | 本機 | `os/arch`；`npm` 禁用 |
 | `archive` | string | `none` | `none`、`zip`、`tar.gz` |
 | `include` | list | 空 | 隨附檔案／目錄；`npm` 禁用 |
+| `protocols` | object | 空 | 這個服務提供哪些標準協定；`npm` 禁用，見〈`protocols`〉 |
 
 ### `go`
 
@@ -45,6 +46,31 @@ output: dist/
 | `tags` | 空 | build tags |
 | `ldflags` | 空 | 追加在 `-s -w` 後 |
 | `version_var` | 空 | 以 `-X` 注入版本的變數，如 `main.version` |
+
+### `protocols`
+
+`npm` 型別禁用——沒有 Go 產物就讀不出協定的版本。
+
+| 鍵 | 預設 | 說明 |
+|---|---|---|
+| `provides` | 空 | 這個服務**實作**的協定名字，一個名字一列 |
+
+```yaml
+protocols:
+  provides: [hoshi-data, hoshi-data-peer]
+```
+
+**只有名字。** 版本與 contract revision **不**寫在這裡，它們由建置工具從產物
+實際編進去的那份實作讀出來（發佈標準 §12.2）——寫在設定檔的數字是第二份，
+而它忘記跟著改的方向剛好是危險的那一邊：宣告一個服務沒有實作到的 revision，
+呼叫端的啟動檢查會**通過**，缺的那個操作要到第一個需要它的請求才變成 404。
+
+**沒有 `requires`。** 這個服務呼叫哪些協定是「它連進去了什麼」的事實，由建置
+讀出來，不由人列。
+
+宣告的協定必須真的在產物裡（有一個套件宣告同名的 `ProtocolName`），否則建置會
+停下來並指名。這裡**不**退而寫 `0`：`provides` 的 `0` 代表「滿足不了任何要求」，
+會讓每一個呼叫端的閘都變紅。
 
 ### `npm`
 
@@ -158,7 +184,7 @@ Windows 執行檔加 `.exe`。archive 命名為
 
 每個產物旁邊多一份 `<產物名>.release.json`，形狀由發佈標準的
 `hoshi.release/v1` 定義：服務、`type`、版本、完整 commit、`dirty`、建立時間、
-目標平臺、完整 artifact sha256 與 build provenance。
+目標平臺、完整 artifact sha256、build provenance，以及這個產物提供與需要的協定。
 
 ```text
 dist/
@@ -171,6 +197,11 @@ dist/
 - `type: npm` 不輸出：產物就是輸出目錄本身，沒有旁邊可放。
 - 設定雜湊、節點與 slot 由部署工具在綁定時補進 `deployment` 段，建置端不寫。
 - 認不出 commit 時留空，不猜；問不出工作樹狀態時記為 `dirty`。
+- `protocols` 的兩個陣列由**這一次建置實際連進去的套件**決定：`go list -deps`
+  問出這個目標連了哪些套件，宣告了 `Protocol` 與 `ProtocolName` 的就是一個協定。
+  `protocols.provides` 列到的放 `provides`，其餘放 `requires`。
+- 沒有相依時兩個陣列是 `[]`，**不是**省略整個 `protocols`：兩者是不同的答案，
+  而部署層必須把「未宣告」擋下來，不得讀成「沒有相依」。
 
 ## 5. 命令
 
@@ -223,6 +254,9 @@ type: go-npm
 output: dist/
 targets: [linux/amd64, windows/amd64]
 include: [story/]
+
+protocols:
+  provides: [my-app]
 
 go:
   dir: backend

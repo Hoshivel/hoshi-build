@@ -56,6 +56,12 @@ type Descriptor struct {
 	Target   *DescriptorTarget  `json:"target,omitempty"`
 	Artifact DescriptorArtifact `json:"artifact"`
 	Builder  DescriptorBuilder  `json:"builder"`
+	// Protocols is omitted when this build could not answer the question at
+	// all. That is not the same as "no dependencies", and the standard
+	// requires the deployment layer to keep the two apart: an absent object
+	// must be reported as undeclared, because reading it as "requires
+	// nothing" lets every gate pass.
+	Protocols *DescriptorProtocols `json:"protocols,omitempty"`
 }
 
 type DescriptorTarget struct {
@@ -233,6 +239,7 @@ func (b *builder) describe(art *Artifact, version string, facts buildFacts) (*De
 	if art.Target != (config.Target{}) {
 		d.Target = &DescriptorTarget{OS: art.Target.OS, Arch: art.Target.Arch}
 	}
+	d.Protocols = facts.protocols[art.Target]
 	return d, nil
 }
 
@@ -242,6 +249,10 @@ type buildFacts struct {
 	dirty       bool
 	goVersion   string
 	toolVersion string
+	// protocols is per target: build constraints can put different packages
+	// into different platforms, so the question is asked once per target
+	// rather than once per build.
+	protocols map[config.Target]*DescriptorProtocols
 }
 
 // writeDescriptors writes one descriptor beside each artifact.
@@ -271,6 +282,11 @@ func (b *builder) writeDescriptors(ctx context.Context, result *Result, toolVers
 		goVersion:   goVersion(ctx, b.runner),
 		toolVersion: toolVersion,
 	}
+	protocols, err := b.buildProtocols(ctx, result)
+	if err != nil {
+		return err
+	}
+	facts.protocols = protocols
 
 	b.ui.Title("發佈描述子")
 	for i := range result.Artifacts {
