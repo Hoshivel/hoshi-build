@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
 	"github.com/hoshivel/hoshi-build/internal/dev"
@@ -20,6 +21,46 @@ import (
 // version is stamped in at build time with
 // -ldflags "-X main.version=…" (go.version_var in .hoshi-build.yaml).
 var version = "dev"
+
+// devVersion is what this tool reports when it cannot find out what it is.
+const devVersion = "dev"
+
+// toolVersion is what this program says its own version is — in `hoshi version`
+// and in every release descriptor's `builder.tool_version`.
+//
+// The stamped value wins when there is one: it comes from `git describe`, so it
+// can say `v0.3.0-4-gabc123-dirty` where the module version can only ever say a
+// released tag.
+//
+// Without it, fall back to the module version the go command recorded in the
+// binary. That is the path everything else takes: every repository installs this
+// tool with `go install …@latest`, and `go install` does not apply this
+// repository's own ldflags. Before this fallback, `builder.tool_version` said
+// `dev` on every artifact the platform produced — in the one field whose job is
+// to say which tool made it.
+func toolVersion() string {
+	module := ""
+	if info, ok := debug.ReadBuildInfo(); ok {
+		module = info.Main.Version
+	}
+	return resolveVersion(version, module)
+}
+
+// resolveVersion is toolVersion's decision, separated from where the two inputs
+// come from so it can be tested without building a binary for each case.
+//
+// `(devel)` is refused rather than reported: it is what a build from a working
+// tree records, and it says strictly less than `dev` — `dev` at least reads as
+// "this one cannot tell you", while `(devel)` looks like an answer.
+func resolveVersion(stamped, module string) string {
+	if stamped != "" && stamped != devVersion {
+		return stamped
+	}
+	if module == "" || module == "(devel)" {
+		return devVersion
+	}
+	return module
+}
 
 const usage = `hoshi —— Hoshivel 開發工具
 
@@ -112,7 +153,7 @@ func dispatch(args []string) error {
 	case "init":
 		return cmdInit(ctx, args)
 	case "version":
-		fmt.Println("hoshi " + version)
+		fmt.Println("hoshi " + toolVersion())
 		return nil
 	case "help", "-h", "--help":
 		fmt.Print(usage)
