@@ -48,6 +48,8 @@ type Config struct {
 	Archive string   `yaml:"archive" json:"archive"`
 	Include []string `yaml:"include" json:"include"`
 
+	Protocols ProtocolsConfig `yaml:"protocols" json:"protocols"`
+
 	Go    GoConfig    `yaml:"go"    json:"go"`
 	Npm   NpmConfig   `yaml:"npm"   json:"npm"`
 	Test  TestConfig  `yaml:"test"  json:"test"`
@@ -57,6 +59,23 @@ type Config struct {
 	// Where this came from. Not settable from the file.
 	Path string `yaml:"-" json:"-"` // absolute path of the config file
 	Root string `yaml:"-" json:"-"` // absolute path of the repo root
+}
+
+// ProtocolsConfig is the `protocols:` section — which standard protocols this
+// service is the server side of.
+//
+// Only names. The version and the contract revision of each are read out of the
+// implementation the artifact actually linked, never from this file
+// (engineering/release.md §12.2): a number written here is one more copy that
+// can forget to move, and the direction it forgets in is the dangerous one —
+// claiming a revision the service does not implement makes the caller's startup
+// check pass and turns the missing operation into a 404 on the first request
+// that needs it.
+//
+// There is no `requires:` here for the same reason there is no version. What a
+// service calls is a fact about what it links, and the build reads it.
+type ProtocolsConfig struct {
+	Provides []string `yaml:"provides" json:"provides"`
 }
 
 // GoConfig is the `go:` section: where the module is and how to link it.
@@ -335,6 +354,22 @@ func (c *Config) validate() error {
 	if len(c.Include) > 0 && c.Type == TypeNpm {
 		errs = append(errs, fmt.Errorf(
 			"`type: npm` 不支援 `include`：靜態產物就是 npm 產出的那一疊"))
+	}
+	if len(c.Protocols.Provides) > 0 && !c.BuildsGo() {
+		errs = append(errs, fmt.Errorf(
+			"`type: %s` 沒有 Go 產物，讀不出協定的版本與 revision，"+
+				"所以不能宣告 `protocols.provides`", c.Type))
+	}
+	declared := make(map[string]bool, len(c.Protocols.Provides))
+	for _, name := range c.Protocols.Provides {
+		switch {
+		case strings.TrimSpace(name) == "":
+			errs = append(errs, fmt.Errorf("`protocols.provides` 有一個空字串"))
+		case declared[name]:
+			errs = append(errs, fmt.Errorf(
+				"`protocols.provides` 列了兩次 %q", name))
+		}
+		declared[name] = true
 	}
 
 	for _, spec := range []struct{ key, value string }{
