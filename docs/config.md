@@ -33,7 +33,7 @@ output: dist/
 | `targets` | list | 本機 | `os/arch`；`npm` 禁用 |
 | `archive` | string | `none` | `none`、`zip`、`tar.gz` |
 | `include` | list | 空 | 隨附檔案／目錄；`npm` 禁用 |
-| `protocols` | object | 空 | 這個服務提供哪些標準協定；`npm` 禁用，見〈`protocols`〉 |
+| `protocols` | object | 空 | 這個服務提供、以及自己也呼叫哪些標準協定；`npm` 禁用，見〈`protocols`〉 |
 
 ### `go`
 
@@ -54,10 +54,12 @@ output: dist/
 | 鍵 | 預設 | 說明 |
 |---|---|---|
 | `provides` | 空 | 這個服務**實作**的協定名字，一個名字一列 |
+| `also_calls` | 空 | `provides` 裡**自己也呼叫**的那幾個，一個名字一列 |
 
 ```yaml
 protocols:
   provides: [hoshi-data, hoshi-data-peer]
+  also_calls: [hoshi-data-peer]
 ```
 
 **只有名字。** 版本與 contract revision **不**寫在這裡，它們由建置工具從產物
@@ -66,11 +68,25 @@ protocols:
 呼叫端的啟動檢查會**通過**，缺的那個操作要到第一個需要它的請求才變成 404。
 
 **沒有 `requires`。** 這個服務呼叫哪些協定是「它連進去了什麼」的事實，由建置
-讀出來，不由人列。
+讀出來，不由人列。`also_calls` 不是那份清單，它只補上連結說不出來的那一件事。
 
 宣告的協定必須真的在產物裡（有一個套件宣告同名的 `ProtocolName`），否則建置會
 停下來並指名。這裡**不**退而寫 `0`：`provides` 的 `0` 代表「滿足不了任何要求」，
 會讓每一個呼叫端的閘都變紅。
+
+#### `also_calls`：既提供又呼叫的那幾個
+
+上面的例子裡 `hoshi-data-peer` 是實例之間互相複製用的協定，同一個服務兩端都是
+自己。它因此同時進描述子的兩個陣列（發佈標準 §12.1），兩筆的版本與 revision
+相同，讀作「我實作到 N，也要求對面至少 N」。
+
+**為什麼要宣告，不是推導出來的**：一個協定的 client 與 server 通常在同一個套件
+裡，所以「連進去了」說不出這個產物是哪一邊。兩種猜法都會錯——全部算成呼叫，
+只提供的服務會推出一筆指向自己的相依，於是艦隊部分升級時它的 candidate 被自己
+擋住；全部算成不呼叫，那條協定上就沒有任何 consumer floor，兩道閘恆綠。
+
+**必須是 `provides` 的子集。** 沒有提供的協定由連結推出 `requires`，
+再宣告一次是第二份會漂移的名單；列了會被當場拒絕並指名。
 
 ### `npm`
 
@@ -199,7 +215,8 @@ dist/
 - 認不出 commit 時留空，不猜；問不出工作樹狀態時記為 `dirty`。
 - `protocols` 的兩個陣列由**這一次建置實際連進去的套件**決定：`go list -deps`
   問出這個目標連了哪些套件，宣告了 `Protocol` 與 `ProtocolName` 的就是一個協定。
-  `protocols.provides` 列到的放 `provides`，其餘放 `requires`。
+  `protocols.provides` 列到的放 `provides`，其餘放 `requires`；兩邊都列到的
+  （`protocols.also_calls`）兩個陣列各放一筆，值相同。
 - 沒有相依時兩個陣列是 `[]`，**不是**省略整個 `protocols`：兩者是不同的答案，
   而部署層必須把「未宣告」擋下來，不得讀成「沒有相依」。
 

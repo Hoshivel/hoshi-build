@@ -272,3 +272,105 @@ func TestTheSameProtocolTwiceIsRefused(t *testing.T) {
 		t.Fatal("同一個協定列兩次卻通過了")
 	}
 }
+
+// A protocol this artifact both serves and calls belongs in **both** lists
+// (release.md §12.1), and the two entries carry the same values because both
+// come from the one linked implementation.
+//
+// The either/or this replaces produced a descriptor that could not say it: a
+// service whose instances replicate to each other serves its peer protocol, so
+// the requirement half went unrecorded and both §12.3 and §12.4 stayed green on
+// that protocol no matter what the other instances offered.
+func TestAProtocolServedAndCalledIsInBothLists(t *testing.T) {
+	requireToolchain(t)
+
+	yaml := fixtureConfig() + "  also_calls:\n    - demo-store\n"
+	res, _, err := buildFixture(t, yaml, protocolFixture(nil))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	got := readDescriptor(t, res.Artifacts[0].Descriptor)
+	protocols := got["protocols"].(map[string]any)
+	provides := protocolNames(t, protocols["provides"])
+	requires := protocolNames(t, protocols["requires"])
+
+	if len(provides) != 1 || provides[0] != "demo-store" {
+		t.Errorf("provides = %v，want [demo-store]", provides)
+	}
+	if len(requires) != 2 || requires[0] != "demo-directory" || requires[1] != "demo-store" {
+		t.Fatalf("requires = %v，want [demo-directory demo-store]——"+
+			"既提供又呼叫的協定要同時進兩個陣列（發佈標準 §12.1）", requires)
+	}
+
+	served := protocols["provides"].([]any)[0].(map[string]any)
+	called := protocols["requires"].([]any)[1].(map[string]any)
+	if served["version"] != called["version"] ||
+		served["contract_revision"] != called["contract_revision"] {
+		t.Errorf("同一個協定兩邊的值不同：provides=%v、requires=%v——"+
+			"兩筆由同一份實作決定（發佈標準 §12.1）", served, called)
+	}
+}
+
+// Without the declaration the descriptor keeps the old shape. Serving is not
+// evidence of calling, and the linked package cannot tell the two apart — so
+// the default stays the one that does not invent a dependency.
+func TestServingAloneDoesNotBecomeARequirement(t *testing.T) {
+	requireToolchain(t)
+
+	res, _, err := buildFixture(t, fixtureConfig(), protocolFixture(nil))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	got := readDescriptor(t, res.Artifacts[0].Descriptor)
+	protocols := got["protocols"].(map[string]any)
+	requires := protocolNames(t, protocols["requires"])
+	if len(requires) != 1 || requires[0] != "demo-directory" {
+		t.Errorf("requires = %v，want [demo-directory]——沒有宣告 `also_calls` 時，"+
+			"提供一個協定不等於呼叫它", requires)
+	}
+}
+
+// `also_calls` only marks entries of `provides`. A protocol this artifact does
+// not serve reaches `requires` through linkage already, so accepting it here
+// would be a second list — and this is the copy that drifts, because nothing
+// ties it to what went into the build.
+func TestAlsoCallsMustBeOneOfProvides(t *testing.T) {
+	root := testRepo(t, "name: fixture\ntype: go\nprotocols:\n"+
+		"  provides:\n    - demo-store\n  also_calls:\n    - demo-directory\n", nil)
+	_, err := config.LoadFrom(root)
+	if err == nil {
+		t.Fatal("`also_calls` 收下了一個沒有提供的協定")
+	}
+	if !strings.Contains(err.Error(), "demo-directory") {
+		t.Errorf("錯誤沒有指名是哪一個協定：%v", err)
+	}
+}
+
+func TestTheSameProtocolTwiceInAlsoCallsIsRefused(t *testing.T) {
+	root := testRepo(t, "name: fixture\ntype: go\nprotocols:\n"+
+		"  provides:\n    - demo-store\n"+
+		"  also_calls:\n    - demo-store\n    - demo-store\n", nil)
+	if _, err := config.LoadFrom(root); err == nil {
+		t.Fatal("`also_calls` 同一個協定列兩次卻通過了")
+	}
+}
+
+// A repo with no Go artifact has nothing to read the values out of, and that is
+// as true of the half that says "I also call it" as of the half that says
+// "I serve it".
+func TestAnNpmRepoCannotDeclareAlsoCalls(t *testing.T) {
+	root := testRepo(t, "name: fixture\ntype: npm\nprotocols:\n"+
+		"  also_calls:\n    - demo-store\n", nil)
+	_, err := config.LoadFrom(root)
+	if err == nil {
+		t.Fatal("type: npm 宣告了 also_calls 卻通過了")
+	}
+	// On the message, not just on the refusal: this config is also refused by
+	// the subset rule, so a test that only asks "did it fail" stays green with
+	// the type guard gone.
+	if !strings.Contains(err.Error(), "also_calls") ||
+		!strings.Contains(err.Error(), "沒有 Go 產物") {
+		t.Errorf("擋下來的不是型別那一關：%v", err)
+	}
+}
