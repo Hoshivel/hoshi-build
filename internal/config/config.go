@@ -62,7 +62,7 @@ type Config struct {
 }
 
 // ProtocolsConfig is the `protocols:` section — which standard protocols this
-// service is the server side of.
+// service is the server side of, and which of those it also calls.
 //
 // Only names. The version and the contract revision of each are read out of the
 // implementation the artifact actually linked, never from this file
@@ -73,9 +73,28 @@ type Config struct {
 // that needs it.
 //
 // There is no `requires:` here for the same reason there is no version. What a
-// service calls is a fact about what it links, and the build reads it.
+// service calls is a fact about what it links, and the build reads it —
+// `also_calls` is not that list, it is the one thing linkage cannot say.
 type ProtocolsConfig struct {
 	Provides []string `yaml:"provides" json:"provides"`
+
+	// AlsoCalls names the protocols in Provides that this service also calls,
+	// so they land in both descriptor lists (release.md §12.1).
+	//
+	// Declared rather than derived because a protocol's client and server
+	// usually live in one package — two hand-kept copies of a wire format is
+	// the failure the shared package exists to stop — so linking it does not
+	// say which side this artifact is. Guessing either way has a symptom:
+	// "linked means calls" gives a serve-only service a requirement pointing at
+	// itself, and a partly upgraded fleet then shuts its own candidate out
+	// while the message tells the operator to roll that very service out
+	// first; "linked means serves" is the silent one, and it is what leaves a
+	// replicating service's peer protocol with no consumer floor at all.
+	//
+	// Must be a subset of Provides. A protocol this artifact does not serve is
+	// already derived from linkage, so listing it here would be a second list
+	// that can drift.
+	AlsoCalls []string `yaml:"also_calls" json:"also_calls"`
 }
 
 // GoConfig is the `go:` section: where the module is and how to link it.
@@ -355,10 +374,21 @@ func (c *Config) validate() error {
 		errs = append(errs, fmt.Errorf(
 			"`type: npm` 不支援 `include`：靜態產物就是 npm 產出的那一疊"))
 	}
-	if len(c.Protocols.Provides) > 0 && !c.BuildsGo() {
-		errs = append(errs, fmt.Errorf(
-			"`type: %s` 沒有 Go 產物，讀不出協定的版本與 revision，"+
-				"所以不能宣告 `protocols.provides`", c.Type))
+	// Both keys, each named in its own message. A repo with no Go artifact has
+	// nothing to read the values out of, and that is as true of the half that
+	// says "I also call it" as of the half that says "I serve it".
+	for _, spec := range []struct {
+		key  string
+		list []string
+	}{
+		{"provides", c.Protocols.Provides},
+		{"also_calls", c.Protocols.AlsoCalls},
+	} {
+		if len(spec.list) > 0 && !c.BuildsGo() {
+			errs = append(errs, fmt.Errorf(
+				"`type: %s` 沒有 Go 產物，讀不出協定的版本與 revision，"+
+					"所以不能宣告 `protocols.%s`", c.Type, spec.key))
+		}
 	}
 	declared := make(map[string]bool, len(c.Protocols.Provides))
 	for _, name := range c.Protocols.Provides {
@@ -370,6 +400,27 @@ func (c *Config) validate() error {
 				"`protocols.provides` 列了兩次 %q", name))
 		}
 		declared[name] = true
+	}
+	// `also_calls` only marks entries of `provides`. A protocol this artifact
+	// does not serve already reaches `requires` through linkage, so naming it
+	// here would be a second list — and the one that drifts is this one, since
+	// nothing links it to what went into the build (release.md §12.2).
+	calls := make(map[string]bool, len(c.Protocols.AlsoCalls))
+	for _, name := range c.Protocols.AlsoCalls {
+		switch {
+		case strings.TrimSpace(name) == "":
+			errs = append(errs, fmt.Errorf("`protocols.also_calls` 有一個空字串"))
+		case calls[name]:
+			errs = append(errs, fmt.Errorf(
+				"`protocols.also_calls` 列了兩次 %q", name))
+		case !declared[name]:
+			errs = append(errs, fmt.Errorf(
+				"`protocols.also_calls` 列了 %q，但 `protocols.provides` 沒有它。"+
+					"這個鍵只標記「提供的協定裡哪幾個自己也呼叫」；"+
+					"沒有提供的協定由連結推出 `requires`，不必宣告"+
+					"（發佈標準 §12.2）", name))
+		}
+		calls[name] = true
 	}
 
 	for _, spec := range []struct{ key, value string }{

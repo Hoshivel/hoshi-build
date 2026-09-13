@@ -204,12 +204,26 @@ func assign(lit *ast.BasicLit, name, importPath string, pkg *protocolPackage) er
 	return nil
 }
 
-// describeProtocols splits the linked protocols into the two lists.
+// describeProtocols sorts the linked protocols into the two lists.
 //
-// What the service serves is declared in the config, because "which protocol am
-// I the server of" is not something the linked code says: hoshi-data and every
-// caller of it link the same package. Everything else linked is something this
-// artifact calls.
+// Two lists, not a partition. What the service serves is declared in the
+// config, because "which protocol am I the server of" is not something the
+// linked code says: hoshi-data and every caller of it link the same package.
+// Everything else linked is something this artifact calls — and a protocol it
+// serves *and* calls belongs in both (release.md §12.1), which is the shape a
+// service whose instances replicate to each other has for its peer protocol.
+//
+// That last case has to be declared too, and for the same reason `provides` is:
+// one package holds both ends, so linkage says the artifact carries the
+// protocol, never which side of it this artifact is. Deriving it instead would
+// have to guess, and both guesses are wrong in a way that shows up late —
+// "everything linked is called" hands a serve-only service a requirement on
+// itself, and "nothing served is called" is the silent one that leaves a peer
+// protocol with no consumer floor for either gate to check.
+//
+// Both entries carry the same version and revision because both come from the
+// one linked implementation: "I implement N, and I need the other end at N or
+// better."
 //
 // A declared name with no matching linked package is refused. The alternative
 // would be writing a revision of 0 for it, and 0 in `provides` means "satisfies
@@ -219,6 +233,10 @@ func describeProtocols(cfg *config.Config, linked []protocolPackage) (*Descripto
 	serves := make(map[string]bool, len(cfg.Protocols.Provides))
 	for _, name := range cfg.Protocols.Provides {
 		serves[name] = true
+	}
+	calls := make(map[string]bool, len(cfg.Protocols.AlsoCalls))
+	for _, name := range cfg.Protocols.AlsoCalls {
+		calls[name] = true
 	}
 
 	out := &DescriptorProtocols{
@@ -235,7 +253,9 @@ func describeProtocols(cfg *config.Config, linked []protocolPackage) (*Descripto
 		}
 		if serves[pkg.name] {
 			out.Provides = append(out.Provides, entry)
-			continue
+			if !calls[pkg.name] {
+				continue
+			}
 		}
 		out.Requires = append(out.Requires, entry)
 	}
