@@ -3,6 +3,7 @@ package build
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -226,6 +227,7 @@ func TestHalfADeclarationIsNotAProtocol(t *testing.T) {
 	cases := map[string]string{
 		"只有版本": "package p\n\nconst Protocol = 1\n",
 		"只有名字": "package p\n\nconst ProtocolName = \"demo\"\n",
+		"只有下限": "package p\n\nconst PeerContractRevisionFloor = 1\n",
 	}
 	for name, source := range cases {
 		dir := t.TempDir()
@@ -274,8 +276,9 @@ func TestTheSameProtocolTwiceIsRefused(t *testing.T) {
 }
 
 // A protocol this artifact both serves and calls belongs in **both** lists
-// (release.md §12.1), and the two entries carry the same values because both
-// come from the one linked implementation.
+// (release.md §12.1). With no floor declared the two entries carry the same
+// values: what the other instances must serve defaults to what this one
+// implements.
 //
 // The either/or this replaces produced a descriptor that could not say it: a
 // service whose instances replicate to each other serves its peer protocol, so
@@ -308,7 +311,135 @@ func TestAProtocolServedAndCalledIsInBothLists(t *testing.T) {
 	if served["version"] != called["version"] ||
 		served["contract_revision"] != called["contract_revision"] {
 		t.Errorf("同一個協定兩邊的值不同：provides=%v、requires=%v——"+
-			"兩筆由同一份實作決定（發佈標準 §12.1）", served, called)
+			"沒有宣告下限時，要求其餘實例的就是實作到的那一版（發佈標準 §12.1）",
+			served, called)
+	}
+}
+
+// The other instances are the provider of a protocol a service calls itself,
+// and they are replaced one at a time (release.md §9.11). So the `requires`
+// entry carries the floor the package declares rather than the revision it
+// implements; otherwise the first instance to implement N demands N of peers
+// that all still serve N−1, and §12.3 stops every rollout at its first node.
+func TestASelfCallRequiresTheDeclaredFloor(t *testing.T) {
+	requireToolchain(t)
+
+	yaml := fixtureConfig() + "  also_calls:\n    - demo-store\n"
+	res, _, err := buildFixture(t, yaml, protocolFixture(map[string]string{
+		"internal/served/served.go": "package served\n\n" +
+			"const Protocol = 1\n" +
+			"const ProtocolName = \"demo-store\"\n" +
+			"const ContractRevision = 7\n" +
+			"const PeerContractRevisionFloor = 6\n",
+	}))
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+
+	protocols := readDescriptor(t, res.Artifacts[0].Descriptor)["protocols"].(map[string]any)
+	served := protocols["provides"].([]any)[0].(map[string]any)
+	called := protocols["requires"].([]any)[1].(map[string]any)
+	if served["contract_revision"].(float64) != 7 {
+		t.Errorf("provides 那一筆 = %v，want contract_revision 7——"+
+			"提供的仍然是實作到的那一版", served)
+	}
+	if called["protocol"] != "demo-store" || called["contract_revision"].(float64) != 6 {
+		t.Errorf("requires 那一筆 = %v，want demo-store、contract_revision 6——"+
+			"要求其餘實例的是套件宣告的下限（發佈標準 §12.1）", called)
+	}
+	if called["version"] != served["version"] {
+		t.Errorf("兩筆的 version 不同：provides=%v、requires=%v——"+
+			"下限只動 revision，major 仍然必須相等", served, called)
+	}
+}
+
+// The floor is a statement about the other instances of the same service, so
+// it moves only the entry of a protocol the artifact both serves and calls. A
+// protocol it only calls needs what its SDK implements (versioning §8.2), and
+// one it only serves has no `requires` entry for a floor to go into.
+func TestTheFloorOnlyMovesASelfCall(t *testing.T) {
+	cfg := &config.Config{Protocols: config.ProtocolsConfig{
+		Provides:  []string{"demo-peer", "demo-store"},
+		AlsoCalls: []string{"demo-peer"},
+	}}
+	linked := []protocolPackage{
+		{name: "demo-directory", version: 2, revision: 5, floor: 3, hasFloor: true},
+		{name: "demo-peer", version: 1, revision: 4, floor: 2, hasFloor: true},
+		{name: "demo-store", version: 1, revision: 7, floor: 6, hasFloor: true},
+	}
+	got, err := describeProtocols(cfg, linked)
+	if err != nil {
+		t.Fatalf("describeProtocols() error = %v", err)
+	}
+
+	if want := "demo-peer v1 r4, demo-store v1 r7"; entries(got.Provides) != want {
+		t.Errorf("provides = %s，want %s——提供的一律是實作到的那一版",
+			entries(got.Provides), want)
+	}
+	if want := "demo-directory v2 r5, demo-peer v1 r2"; entries(got.Requires) != want {
+		t.Errorf("requires = %s，want %s——下限只用在自己也呼叫的那一個；"+
+			"只呼叫的協定要的是 SDK 實作到的那一版（versioning §8.2）",
+			entries(got.Requires), want)
+	}
+}
+
+func entries(list []DescriptorProtocol) string {
+	var parts []string
+	for _, e := range list {
+		parts = append(parts, fmt.Sprintf("%s v%d r%d", e.Protocol, e.Version, e.ContractRevision))
+	}
+	return strings.Join(parts, ", ")
+}
+
+// The floor is read the way the other three are: a literal or nothing, never a
+// guess. And it may not exceed the revision the same package implements — a
+// fleet made entirely of that build could not satisfy itself (release.md
+// §12.1), so the build stops instead of writing it down (§12.2).
+func TestTheFloorIsReadOrRefused(t *testing.T) {
+	const base = "package p\n\nconst Protocol = 1\nconst ProtocolName = \"demo\"\n" +
+		"const ContractRevision = 3\n"
+	cases := []struct {
+		name     string
+		decl     string
+		floor    int
+		hasFloor bool
+		refused  string
+	}{
+		{name: "沒有宣告"},
+		{name: "低於實作到的那一版", decl: "const PeerContractRevisionFloor = 2\n",
+			floor: 2, hasFloor: true},
+		{name: "等於實作到的那一版", decl: "const PeerContractRevisionFloor = 3\n",
+			floor: 3, hasFloor: true},
+		{name: "高於實作到的那一版", decl: "const PeerContractRevisionFloor = 4\n",
+			refused: "§12.1"},
+		{name: "算出來的", decl: "const PeerContractRevisionFloor = ContractRevision - 1\n",
+			refused: "不是字面值"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "p.go"), []byte(base+c.decl), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			got, err := readProtocol("fixture/p", dir, []string{"p.go"})
+			if c.refused != "" {
+				if err == nil {
+					t.Fatalf("被收下了：%+v", got)
+				}
+				if !strings.Contains(err.Error(), "PeerContractRevisionFloor") ||
+					!strings.Contains(err.Error(), c.refused) {
+					t.Errorf("錯誤沒有指名常數與原因（%s）：%v", c.refused, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("readProtocol() error = %v", err)
+			}
+			if got == nil || got.revision != 3 || got.floor != c.floor || got.hasFloor != c.hasFloor {
+				t.Errorf("讀到 %+v，want revision 3、floor %d、hasFloor %v",
+					got, c.floor, c.hasFloor)
+			}
+		})
 	}
 }
 

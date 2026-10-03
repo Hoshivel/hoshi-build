@@ -45,13 +45,22 @@ type protocolPackage struct {
 	name       string
 	version    int
 	revision   int
+
+	// floor is what the implementation needs from the other instances of a
+	// service that calls the protocol it serves (release.md §12.1); hasFloor
+	// says whether the package declared one at all.
+	floor    int
+	hasFloor bool
 }
 
-// The three package-scope constants a protocol implementation declares.
+// The package-scope constants a protocol implementation declares. The first
+// three say which protocol the package is; the fourth only matters to a service
+// whose instances call each other over it.
 const (
 	constProtocol = "Protocol"
 	constName     = "ProtocolName"
 	constRevision = "ContractRevision"
+	constFloor    = "PeerContractRevisionFloor"
 )
 
 // linkedProtocols reads the protocols out of the packages this target actually
@@ -115,6 +124,13 @@ func linkedProtocols(ctx context.Context, r run.Runner, cfg *config.Config,
 // `ContractRevision` is optional and absent reads as 0, which is the value the
 // versioning standard §8.2 already gives a peer that predates the ledger — it
 // satisfies no requirement of 1 or more.
+//
+// `PeerContractRevisionFloor` is optional too, and absent means the implemented
+// revision. A floor above that revision is refused for every artifact that
+// links the package, the same way a computed constant is: it says the package
+// needs more from the other instances than it serves itself, so a fleet made
+// entirely of this build could not satisfy itself (release.md §12.1), and
+// §12.2 requires the build to stop rather than write it down.
 func readProtocol(importPath, dir string, files []string) (*protocolPackage, error) {
 	pkg := protocolPackage{importPath: importPath}
 	fset := token.NewFileSet()
@@ -137,10 +153,17 @@ func readProtocol(importPath, dir string, files []string) (*protocolPackage, err
 	if pkg.name == "" || pkg.version == 0 {
 		return nil, nil
 	}
+	if pkg.hasFloor && pkg.floor > pkg.revision {
+		return nil, fmt.Errorf(
+			"%s 的 `%s` 是 %d，高於它實作到的 `%s` %d。"+
+				"下限是要求其餘實例至少提供哪一版，不得高於同一份實作提供的那一版"+
+				"（發佈標準 §12.1）：全部換成這一版之後，沒有任何一臺滿足得了它",
+			importPath, constFloor, pkg.floor, constRevision, pkg.revision)
+	}
 	return &pkg, nil
 }
 
-// scanConsts pulls the three constants out of one file's package-scope decls.
+// scanConsts pulls the four constants out of one file's package-scope decls.
 //
 // Only a plain literal is accepted. Anything else — a computed expression, an
 // iota, a reference to another package — is refused rather than guessed at,
@@ -158,14 +181,15 @@ func scanConsts(file *ast.File, importPath string, pkg *protocolPackage) error {
 				continue
 			}
 			name := value.Names[0].Name
-			if name != constProtocol && name != constName && name != constRevision {
+			if name != constProtocol && name != constName &&
+				name != constRevision && name != constFloor {
 				continue
 			}
 			lit, ok := value.Values[0].(*ast.BasicLit)
 			if !ok {
 				return fmt.Errorf(
 					"%s 的 `%s` 不是字面值，讀不出編進去的是什麼。"+
-						"協定的名字、版本與 revision 必須是常數字面值"+
+						"協定的名字、版本、revision 與下限必須是常數字面值"+
 						"（發佈標準 §12.2）", importPath, name)
 			}
 			if err := assign(lit, name, importPath, pkg); err != nil {
@@ -187,7 +211,7 @@ func assign(lit *ast.BasicLit, name, importPath string, pkg *protocolPackage) er
 			return fmt.Errorf("%s 的 `%s` 解不開：%w", importPath, name, err)
 		}
 		pkg.name = text
-	case constProtocol, constRevision:
+	case constProtocol, constRevision, constFloor:
 		if lit.Kind != token.INT {
 			return fmt.Errorf("%s 的 `%s` 不是整數", importPath, name)
 		}
@@ -195,10 +219,13 @@ func assign(lit *ast.BasicLit, name, importPath string, pkg *protocolPackage) er
 		if err != nil {
 			return fmt.Errorf("%s 的 `%s` 解不開：%w", importPath, name, err)
 		}
-		if name == constProtocol {
+		switch name {
+		case constProtocol:
 			pkg.version = n
-		} else {
+		case constRevision:
 			pkg.revision = n
+		default:
+			pkg.floor, pkg.hasFloor = n, true
 		}
 	}
 	return nil
@@ -221,9 +248,21 @@ func assign(lit *ast.BasicLit, name, importPath string, pkg *protocolPackage) er
 // itself, and "nothing served is called" is the silent one that leaves a peer
 // protocol with no consumer floor for either gate to check.
 //
-// Both entries carry the same version and revision because both come from the
-// one linked implementation: "I implement N, and I need the other end at N or
-// better."
+// Both entries come from the one linked implementation and carry the same
+// version, but not always the same revision. `provides` holds the revision it
+// implements; `requires` holds what it needs from the other instances, which is
+// the floor the package declares and the implemented revision when it declares
+// none (release.md §12.1). The two are separate because instances are replaced
+// one at a time (§9.11): the first one to implement N faces peers that all
+// serve N−1, so needing N there would stop every rollout at its first node
+// (§12.3). The default is the implemented revision because a package that never
+// said it works with the previous one is not assumed to — a forgotten floor
+// then stops a release before it writes anything, instead of after the new
+// instance meets peers that cannot answer it.
+//
+// The floor moves nothing else. A protocol this artifact only calls needs what
+// its SDK implements (versioning §8.2), and one it only serves has no
+// `requires` entry for a floor to go into.
 //
 // A declared name with no matching linked package is refused. The alternative
 // would be writing a revision of 0 for it, and 0 in `provides` means "satisfies
@@ -255,6 +294,9 @@ func describeProtocols(cfg *config.Config, linked []protocolPackage) (*Descripto
 			out.Provides = append(out.Provides, entry)
 			if !calls[pkg.name] {
 				continue
+			}
+			if pkg.hasFloor {
+				entry.ContractRevision = pkg.floor
 			}
 		}
 		out.Requires = append(out.Requires, entry)
