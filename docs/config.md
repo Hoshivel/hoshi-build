@@ -77,8 +77,7 @@ protocols:
 #### `also_calls`：既提供又呼叫的那幾個
 
 上面的例子裡 `hoshi-data-peer` 是實例之間互相複製用的協定，同一個服務兩端都是
-自己。它因此同時進描述子的兩個陣列（發佈標準 §12.1），兩筆的版本與 revision
-相同，讀作「我實作到 N，也要求對面至少 N」。
+自己。它因此同時進描述子的兩個陣列（發佈標準 §12.1）。
 
 **為什麼要宣告，不是推導出來的**：一個協定的 client 與 server 通常在同一個套件
 裡，所以「連進去了」說不出這個產物是哪一邊。兩種猜法都會錯——全部算成呼叫，
@@ -87,6 +86,26 @@ protocols:
 
 **必須是 `provides` 的子集。** 沒有提供的協定由連結推出 `requires`，
 再宣告一次是第二份會漂移的名單；列了會被當場拒絕並指名。
+
+**`requires` 那一筆是下限。** 兩筆的版本相同，revision 不一定：`provides` 那一筆
+是實作到的那一版（`ContractRevision`），`requires` 那一筆是要求**其餘實例**至少
+哪一版——套件宣告的 `PeerContractRevisionFloor`，沒有宣告時等於實作到的那一版。
+
+```go
+const ContractRevision = 3
+const PeerContractRevisionFloor = 2 // what the previous release implements
+```
+
+實例只能一臺一臺換，第一臺換上時其餘實例全是上一版。要求等於實作到的那一版時，
+每升一次 revision，部署層都在寫入第一臺之前擋下（發佈標準 §12.3）。所以升
+revision 的那一版把下限留在上一版，全部換完之後的下一版才把它升上去（versioning
+§8.5）。沒有宣告時取實作到的那一版，是因為沒有說相容就不當它相容：忘了宣告的那
+一次發佈停在寫入之前，不是換上去之後才發現其餘實例聽不懂。
+
+下限只用在 `also_calls` 列到的協定：只呼叫的協定要求的是 SDK 實作到的那一版
+（versioning §8.2），只提供的協定沒有 `requires` 那一筆。下限必須是字面值，且不得
+高於同一個套件的 `ContractRevision`；違反時不論哪個產物連到那個套件，建置都停下並
+指名，因為錯在套件本身。
 
 ### `npm`
 
@@ -216,7 +235,8 @@ dist/
 - `protocols` 的兩個陣列由**這一次建置實際連進去的套件**決定：`go list -deps`
   問出這個目標連了哪些套件，宣告了 `Protocol` 與 `ProtocolName` 的就是一個協定。
   `protocols.provides` 列到的放 `provides`，其餘放 `requires`；兩邊都列到的
-  （`protocols.also_calls`）兩個陣列各放一筆，值相同。
+  （`protocols.also_calls`）兩個陣列各放一筆，`requires` 那一筆的 revision 是套件
+  宣告的 `PeerContractRevisionFloor`，沒有宣告時與 `provides` 那一筆相同。
 - 沒有相依時兩個陣列是 `[]`，**不是**省略整個 `protocols`：兩者是不同的答案，
   而部署層必須把「未宣告」擋下來，不得讀成「沒有相依」。
 
