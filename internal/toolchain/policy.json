@@ -1,0 +1,4 @@
+{
+  "schema": "hoshi.go-release-toolchain/v1",
+  "toolchain": "go1.26.10"
+}

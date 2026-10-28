@@ -279,7 +279,7 @@ func (b *builder) writeDescriptors(ctx context.Context, result *Result, toolVers
 	facts := buildFacts{
 		commit:      commit,
 		dirty:       dirty,
-		goVersion:   goVersion(ctx, b.runner),
+		goVersion:   b.releaseGo,
 		toolVersion: toolVersion,
 	}
 	protocols, err := b.buildProtocols(ctx, result)

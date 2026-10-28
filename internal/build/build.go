@@ -15,6 +15,7 @@ import (
 
 	"github.com/hoshivel/hoshi-build/internal/config"
 	"github.com/hoshivel/hoshi-build/internal/run"
+	"github.com/hoshivel/hoshi-build/internal/toolchain"
 	"github.com/hoshivel/hoshi-build/internal/ui"
 )
 
@@ -58,16 +59,32 @@ type Artifact struct {
 }
 
 type builder struct {
-	cfg    *config.Config
-	ui     *ui.Printer
-	runner run.Runner
-	opts   Options
-	out    string // absolute output directory
+	cfg       *config.Config
+	ui        *ui.Printer
+	runner    run.Runner
+	opts      Options
+	out       string // absolute output directory
+	releaseGo string
 }
 
 // Run executes a build.
 func Run(ctx context.Context, cfg *config.Config, p *ui.Printer, r run.Runner, opts Options) (*Result, error) {
 	b := &builder{cfg: cfg, ui: p, runner: r, opts: opts}
+	if cfg.BuildsGo() && !opts.SkipGo {
+		policy, err := toolchain.Release()
+		if err != nil {
+			return nil, err
+		}
+		b.runner = run.WithEnv(r, []string{"GOTOOLCHAIN=" + policy.Toolchain})
+		if err := run.RequireTool(b.runner, "go", run.HintGo); err != nil {
+			return nil, err
+		}
+		b.releaseGo = goVersion(ctx, b.runner)
+		if b.releaseGo != policy.Toolchain {
+			return nil, fmt.Errorf("發佈需要 %s，實際編譯器回報 %q；請先在線上準備該 Go 工具鏈", policy.Toolchain, b.releaseGo)
+		}
+		b.ui.Note("發佈編譯器：%s（本次子行程）", b.releaseGo)
+	}
 
 	outRel := cfg.Output
 	if opts.Output != "" {
@@ -201,6 +218,9 @@ func (b *builder) buildTarget(ctx context.Context, t config.Target, version stri
 
 	b.ui.Step("go build %s", t)
 	if err := b.buildGo(ctx, t, binPath, version); err != nil {
+		return nil, err
+	}
+	if err := b.verifyGoCompiler(ctx, binPath); err != nil {
 		return nil, err
 	}
 

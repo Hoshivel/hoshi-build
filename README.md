@@ -54,6 +54,10 @@ output: dist/
 
 - Go 建置固定使用 `CGO_ENABLED=0`、`-mod=readonly`、`-trimpath` 與
   `-ldflags "-s -w"`；`go.ldflags` 只能追加。
+- 發佈編譯器由 `internal/toolchain/policy.json` 固定，只套用到本次建置子行程；
+  會在寫輸出前解析並核對版本，且核對每個執行檔內的實際版本後才寫描述子。
+  首次取得工具鏈需要網路，之後沿用 Go 已驗證快取；不修改主機或呼叫端環境。
+  `hoshi test` 仍使用明示的測試工具鏈，語言相容測試與發佈版本分開記錄。
 - Linux ELF 建置後驗證沒有 `PT_INTERP`；非 ELF 目標明示未檢查。
 - `gofmt -l` 有任何輸出即失敗。
 - `-race` 不可用時，明示降級並改跑 `-count 2`；不得宣稱已做競態檢查。

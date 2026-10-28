@@ -13,6 +13,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/hoshivel/hoshi-build/internal/toolchain"
 )
 
 // fixedClock pins built_at so a test can assert the exact string the standard
@@ -25,12 +27,13 @@ func fixedClock(t *testing.T) {
 }
 
 func gitRunner(commit, status string) *fakeRunner {
+	policy, _ := toolchain.Release()
 	return &fakeRunner{
 		onRun: touchOutput,
 		captures: map[string]string{
 			"git rev-parse HEAD":     commit,
 			"git status --porcelain": status,
-			"go env GOVERSION":       "go1.24.7",
+			"go env GOVERSION":       policy.Toolchain,
 		},
 	}
 }
@@ -96,8 +99,9 @@ func TestDescriptorCarriesTheRequiredBuildFields(t *testing.T) {
 			sha, len(sha))
 	}
 	builder, _ := d["builder"].(map[string]any)
+	policy, _ := toolchain.Release()
 	if builder["tool"] != "hoshi-build" || builder["tool_version"] != "v0.9.0" ||
-		builder["go_version"] != "go1.24.7" {
+		builder["go_version"] != policy.Toolchain {
 		t.Errorf("builder = %v", d["builder"])
 	}
 	if _, found := d["deployment"]; found {
