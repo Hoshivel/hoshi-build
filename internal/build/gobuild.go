@@ -32,7 +32,7 @@ import (
 // inputs is not a build, which is the same reason npm dependencies go in
 // through `npm ci` when a lockfile exists.
 func goArgs(c *config.Config, t config.Target, outPath, version string) []string {
-	args := []string{"build", "-mod=readonly", "-trimpath"}
+	args := []string{"build", "-mod=readonly", "-buildvcs=true", "-trimpath"}
 
 	if len(c.Go.Tags) > 0 {
 		args = append(args, "-tags", strings.Join(c.Go.Tags, ","))

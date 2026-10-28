@@ -58,6 +58,7 @@ func requireToolchain(t *testing.T) {
 func buildFixture(t *testing.T, yaml string, files map[string]string) (*Result, string, error) {
 	t.Helper()
 	root := testRepo(t, yaml, files)
+	initFixtureGit(t, root)
 	cfg := loadRepo(t, root)
 	res, err := Run(context.Background(), cfg, quietPrinter(), run.NewExecRunner(),
 		Options{ToolVersion: "v0.9.0"})

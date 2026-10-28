@@ -50,6 +50,7 @@ func TestBuildProducesAStaticallyLinkedBinary(t *testing.T) {
 			"cmd/fixture/main.go": "package main\n\nfunc main() { println(\"ok\") }\n",
 		})
 	cfg := loadRepo(t, root)
+	initFixtureGit(t, root)
 
 	res, err := Run(context.Background(), cfg, quietPrinter(), run.NewExecRunner(), Options{Verify: true})
 	if err != nil {

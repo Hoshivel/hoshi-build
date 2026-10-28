@@ -208,10 +208,8 @@ func TestDirectoryDigestMatchesTheShellPipeline(t *testing.T) {
 	}
 }
 
-// A tree that cannot be proven clean is reported dirty. The standard forbids
-// shipping a dirty artifact into a production wave, so "cannot tell" has to
-// fall on the side that stops.
-func TestUnprovableTreeIsReportedDirty(t *testing.T) {
+// An unreadable status is unknown, not evidence for a dirty=true descriptor.
+func TestUnprovableTreeRefusesNewDescriptor(t *testing.T) {
 	fixedClock(t)
 	root := testRepo(t, "name: demo-api\ntype: go\ntargets:\n  - linux/amd64\n", nil)
 	c := loadRepo(t, root)
@@ -219,12 +217,11 @@ func TestUnprovableTreeIsReportedDirty(t *testing.T) {
 	r := gitRunner(cleanCommit, "")
 	r.failCapture = map[string]bool{"git status --porcelain": true}
 
-	res, err := Run(context.Background(), c, quietPrinter(), r, Options{})
-	if err != nil {
-		t.Fatalf("Run() error = %v", err)
+	if _, err := Run(context.Background(), c, quietPrinter(), r, Options{}); err == nil || !strings.Contains(err.Error(), "Git 工作樹狀態不可讀") {
+		t.Fatalf("unknown Git status was accepted: %v", err)
 	}
-	if d := readDescriptor(t, res.Artifacts[0].Descriptor); d["dirty"] != true {
-		t.Error("git status 問不出來，dirty 卻是 false")
+	if r.ran("go build") {
+		t.Fatal("unknown Git status reached the output phase")
 	}
 }
 
@@ -243,8 +240,8 @@ func TestDirtyTreeIsRecorded(t *testing.T) {
 	}
 }
 
-// No git, or a short answer from it, means no commit — not a guessed one.
-func TestUnresolvableCommitIsEmptyRatherThanGuessed(t *testing.T) {
+// A producer cannot verify an executable against an absent or shortened source.
+func TestUnresolvableCommitRefusesNewDescriptor(t *testing.T) {
 	fixedClock(t)
 	for name, r := range map[string]*fakeRunner{
 		"沒有 git": {onRun: touchOutput, missing: map[string]bool{"git": true}},
@@ -252,12 +249,11 @@ func TestUnresolvableCommitIsEmptyRatherThanGuessed(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			root := testRepo(t, "name: demo-api\ntype: go\ntargets:\n  - linux/amd64\n", nil)
-			res, err := Run(context.Background(), loadRepo(t, root), quietPrinter(), r, Options{})
-			if err != nil {
-				t.Fatalf("Run() error = %v", err)
+			if _, err := Run(context.Background(), loadRepo(t, root), quietPrinter(), r, Options{}); err == nil || !strings.Contains(err.Error(), "Go 發佈來源") {
+				t.Fatalf("unresolved source was accepted: %v", err)
 			}
-			if d := readDescriptor(t, res.Artifacts[0].Descriptor); d["commit"] != "" {
-				t.Errorf("commit = %v，認不出來時應該留空而不是猜", d["commit"])
+			if r.ran("go build") {
+				t.Fatal("unresolved Git source reached the output phase")
 			}
 		})
 	}

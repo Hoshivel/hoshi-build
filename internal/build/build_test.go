@@ -46,8 +46,20 @@ func (r *fakeRunner) Capture(_ context.Context, c run.Cmd) (string, error) {
 	if c.String() == "go env GOVERSION" {
 		return policy.Toolchain, nil
 	}
+	if c.String() == "git rev-parse HEAD" {
+		return cleanCommit, nil
+	}
 	if c.Name == "go" && len(c.Args) == 3 && c.Args[0] == "version" && c.Args[1] == "-m" {
-		return c.Args[2] + ": " + policy.Toolchain, nil
+		commit := cleanCommit
+		if captured, ok := r.captures["git rev-parse HEAD"]; ok {
+			commit = strings.TrimSpace(captured)
+		}
+		modified := "false"
+		if strings.TrimSpace(r.captures["git status --porcelain"]) != "" {
+			modified = "true"
+		}
+		return c.Args[2] + ": " + policy.Toolchain + "\n\tbuild\tvcs=git\n\tbuild\tvcs.revision=" + commit +
+			"\n\tbuild\tvcs.modified=" + modified + "\n", nil
 	}
 	return "", nil
 }

@@ -186,7 +186,7 @@ gofmt → vet → go build → go test → npm scripts → custom commands
 Go 建置固定套用，無對應設定鍵：
 
 ```text
-CGO_ENABLED=0  -mod=readonly  -trimpath  -ldflags "-s -w"
+CGO_ENABLED=0  -mod=readonly  -buildvcs=true  -trimpath  -ldflags "-s -w"
 ```
 
 `go.ldflags` 只能追加：
@@ -231,7 +231,11 @@ dist/
 - 不進 archive，理由同上。
 - `type: npm` 不輸出：產物就是輸出目錄本身，沒有旁邊可放。
 - 設定雜湊、節點與 slot 由部署工具在綁定時補進 `deployment` 段，建置端不寫。
-- 認不出 commit 時留空，不猜；問不出工作樹狀態時記為 `dirty`。
+- 新 Go 產物在建置前必須取得完整 Git commit 與已知工作樹狀態；組裝後逐個讀回
+  實際 Go 版本及 `vcs.revision`／`vcs.modified`，所有目標都相符後才寫描述子。
+  缺失、不符或建置期間來源改變時失敗；已知且相符的 `dirty=true` 仍照實標記。
+  旗標成功不代表已嵌入 VCS；worktree 未攜帶來源時可使用普通 Git checkout，
+  不得補造 revision。`-no-verify` 不能略過此核對。
 - `protocols` 的兩個陣列由**這一次建置實際連進去的套件**決定：`go list -deps`
   問出這個目標連了哪些套件，宣告了 `Protocol` 與 `ProtocolName` 的就是一個協定。
   `protocols.provides` 列到的放 `provides`，其餘放 `requires`；兩邊都列到的
@@ -266,7 +270,8 @@ test:
 
 ## 6. 版本
 
-`version` 留空時執行 `git describe --tags --always --dirty`；無 git 資訊時使用 `dev`。
+`version` 留空時執行 `git describe --tags --always --dirty`；無 git 資訊時版本字串使用 `dev`。
+Go 發佈仍須通過 §4.1 的來源核對，版本字串的 fallback 不放寬此要求。
 版本寫入 archive 名稱、`go.version_var` 與描述子的 `version`；不安全字元替換為 `-`。
 
 描述子的 `commit` 另外取自 `git rev-parse HEAD`，是完整 40 位——短 commit 會碰撞，
