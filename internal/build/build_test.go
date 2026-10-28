@@ -10,6 +10,7 @@ import (
 
 	"github.com/hoshivel/hoshi-build/internal/config"
 	"github.com/hoshivel/hoshi-build/internal/run"
+	"github.com/hoshivel/hoshi-build/internal/toolchain"
 	"github.com/hoshivel/hoshi-build/internal/ui"
 )
 
@@ -40,6 +41,13 @@ func (r *fakeRunner) Capture(_ context.Context, c run.Cmd) (string, error) {
 	}
 	if out, ok := r.captures[c.String()]; ok {
 		return out, nil
+	}
+	policy, _ := toolchain.Release()
+	if c.String() == "go env GOVERSION" {
+		return policy.Toolchain, nil
+	}
+	if c.Name == "go" && len(c.Args) == 3 && c.Args[0] == "version" && c.Args[1] == "-m" {
+		return c.Args[2] + ": " + policy.Toolchain, nil
 	}
 	return "", nil
 }
