@@ -34,6 +34,7 @@ func TestGoArgsCarriesTheMandatoryFlags(t *testing.T) {
 	want := []string{
 		"build",
 		"-mod=readonly",
+		"-buildvcs=true",
 		"-trimpath",
 		"-ldflags", "-s -w",
 		"-o", "/out/demo-api-linux-amd64",

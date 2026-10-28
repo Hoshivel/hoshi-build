@@ -87,32 +87,32 @@ type DescriptorBuilder struct {
 	GoVersion   string `json:"go_version,omitempty"`
 }
 
-// gitFacts reports the commit an artifact came from and whether the tree that
-// produced it had uncommitted changes.
-//
-// A commit that cannot be resolved is reported as empty rather than guessed:
-// the descriptor's whole job is to be the fact nobody has to remember, so a
-// plausible-looking wrong value is worse than an absent one.
-//
-// A tree whose cleanliness cannot be established is reported dirty. The
-// standard forbids shipping a dirty artifact into a production wave, and the
-// safe direction for "cannot tell" is the one that stops.
-func gitFacts(ctx context.Context, r run.Runner, root string) (string, bool) {
+type gitIdentity struct {
+	commit string
+	dirty  bool
+}
+
+// gitFacts distinguishes a known dirty tree from a source it cannot identify.
+// Only facts that can be compared with the actual binary may label a release.
+func gitFacts(ctx context.Context, r run.Runner, root string) (gitIdentity, error) {
 	if _, err := r.Look("git"); err != nil {
-		return "", false
+		return gitIdentity{}, fmt.Errorf("無法核對 Go 發佈來源：找不到 git：%w", err)
 	}
 	commit, err := r.Capture(ctx, run.Cmd{
 		Dir: root, Name: "git", Args: []string{"rev-parse", "HEAD"}})
 	commit = strings.TrimSpace(commit)
-	if err != nil || !isFullCommit(commit) {
-		return "", false
+	if err != nil {
+		return gitIdentity{}, fmt.Errorf("無法核對 Go 發佈來源：Git commit 不可讀：%w", err)
+	}
+	if !isFullCommit(commit) {
+		return gitIdentity{}, fmt.Errorf("無法核對 Go 發佈來源：Git commit 不可讀或不是完整值 %q", commit)
 	}
 	status, err := r.Capture(ctx, run.Cmd{
 		Dir: root, Name: "git", Args: []string{"status", "--porcelain"}})
 	if err != nil {
-		return commit, true
+		return gitIdentity{}, fmt.Errorf("無法核對 Go 發佈來源：Git 工作樹狀態不可讀：%w", err)
 	}
-	return commit, strings.TrimSpace(status) != ""
+	return gitIdentity{commit: commit, dirty: strings.TrimSpace(status) != ""}, nil
 }
 
 func isFullCommit(s string) bool {
@@ -275,10 +275,23 @@ func (b *builder) writeDescriptors(ctx context.Context, result *Result, toolVers
 		return nil
 	}
 
-	commit, dirty := gitFacts(ctx, b.runner, b.cfg.Root)
+	source, err := gitFacts(ctx, b.runner, b.cfg.Root)
+	if err != nil {
+		return err
+	}
+	if source != b.sourceGit {
+		return fmt.Errorf("Git 來源在建置期間改變；未寫入發佈描述子")
+	}
+	// Check the final assembled files for every target before writing even the
+	// first descriptor. Includes must not replace a previously checked binary.
+	for _, artifact := range result.Artifacts {
+		if err := b.verifyGoIdentity(ctx, artifact.Bin, source); err != nil {
+			return err
+		}
+	}
 	facts := buildFacts{
-		commit:      commit,
-		dirty:       dirty,
+		commit:      source.commit,
+		dirty:       source.dirty,
 		goVersion:   b.releaseGo,
 		toolVersion: toolVersion,
 	}
@@ -287,6 +300,13 @@ func (b *builder) writeDescriptors(ctx context.Context, result *Result, toolVers
 		return err
 	}
 	facts.protocols = protocols
+	latest, err := gitFacts(ctx, b.runner, b.cfg.Root)
+	if err != nil {
+		return err
+	}
+	if latest != source {
+		return fmt.Errorf("Git 來源在建置期間改變；未寫入發佈描述子")
+	}
 
 	b.ui.Title("發佈描述子")
 	for i := range result.Artifacts {

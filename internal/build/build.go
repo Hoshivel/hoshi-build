@@ -65,6 +65,7 @@ type builder struct {
 	opts      Options
 	out       string // absolute output directory
 	releaseGo string
+	sourceGit gitIdentity
 }
 
 // Run executes a build.
@@ -84,6 +85,10 @@ func Run(ctx context.Context, cfg *config.Config, p *ui.Printer, r run.Runner, o
 			return nil, fmt.Errorf("發佈需要 %s，實際編譯器回報 %q；請先在線上準備該 Go 工具鏈", policy.Toolchain, b.releaseGo)
 		}
 		b.ui.Note("發佈編譯器：%s（本次子行程）", b.releaseGo)
+		b.sourceGit, err = gitFacts(ctx, b.runner, cfg.Root)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	outRel := cfg.Output
