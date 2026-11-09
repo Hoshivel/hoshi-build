@@ -112,16 +112,16 @@ jobs:
           go-version-file: go.mod
 
       - name: 初始化 CodeQL
-        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           languages: ${{ matrix.language }}
           queries: security-extended
 
       - name: 建置
-        uses: github/codeql-action/autobuild@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/autobuild@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
 
       - name: 分析
-        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           category: "/language:${{ matrix.language }}"
           # 先落地成檔案，再分開上傳——這樣 GHAS 沒開的倉庫仍然拿得到結果。
@@ -130,7 +130,7 @@ jobs:
 
       - name: 上傳到 code scanning（沒有 GHAS 時會失敗，不影響結論）
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: sarif
           category: "/language:${{ matrix.language }}"
@@ -315,7 +315,7 @@ jobs:
 
       - name: 上傳到 code scanning（沒有 GHAS 時會失敗，不影響結論）
         continue-on-error: true
-        uses: github/codeql-action/upload-sarif@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
         with:
           sarif_file: trivy.sarif
           category: trivy
