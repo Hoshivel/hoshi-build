@@ -136,8 +136,7 @@ func TestSetupInstallsBothToolchains(t *testing.T) {
 	}
 }
 
-// setup means "install", so it installs even when node_modules already exists —
-// unlike the build path, where npm.install=auto skips.
+// setup means "install", regardless of an existing installation.
 func TestSetupInstallsEvenWhenNodeModulesExists(t *testing.T) {
 	c := repo(t, "name: site\ntype: npm\n",
 		map[string]string{"package.json": `{"name":"s"}`, "node_modules/.keep": ""})

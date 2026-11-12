@@ -271,7 +271,7 @@ func TestNpmOutputIsCopiedWhenItDiffersFromOutput(t *testing.T) {
 	}
 }
 
-func TestInstallSkippedWhenNodeModulesPresent(t *testing.T) {
+func TestUnrecordedNodeModulesIsInstalled(t *testing.T) {
 	root := testRepo(t, "name: site\ntype: npm\n",
 		map[string]string{
 			"package.json":       `{"name":"site"}`,
@@ -284,8 +284,8 @@ func TestInstallSkippedWhenNodeModulesPresent(t *testing.T) {
 	if _, err := Run(context.Background(), c, quietPrinter(), r, Options{}); err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	if r.ran("npm ci") || r.ran("npm install") {
-		t.Errorf("node_modules 已存在時不該安裝：%v", r.calls)
+	if !r.ran("npm install") {
+		t.Errorf("沒有輸入記錄的 node_modules 必須重新安裝：%v", r.calls)
 	}
 }
 
