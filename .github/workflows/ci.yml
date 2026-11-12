@@ -80,6 +80,9 @@ jobs:
           go run ./cmd/hoshi build
           -target linux/amd64,linux/arm64,darwin/amd64,darwin/arm64,windows/amd64
 
+      - name: npm 安裝輸入（本機合成套件，不連 registry）
+        run: python3 tools/dev-npm-inputs.py --hoshi dist/hoshi-linux-amd64 --output "${{ runner.temp }}/npm-inputs"
+
       # **覆蓋率：量出來、報出來，不設下限。**
       #
       # 2026-08-21 之前**沒有任何倉庫量過**——十五個倉庫的 workflow 裡

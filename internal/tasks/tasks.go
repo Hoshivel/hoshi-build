@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/hoshivel/hoshi-build/internal/config"
+	"github.com/hoshivel/hoshi-build/internal/npmdeps"
 	"github.com/hoshivel/hoshi-build/internal/run"
 	"github.com/hoshivel/hoshi-build/internal/ui"
 )
@@ -135,40 +136,8 @@ func Setup(ctx context.Context, c *config.Config, p *ui.Printer, r run.Runner) e
 
 // EnsureDeps brings node_modules up. With force set it installs regardless of
 // `npm.install`, which is what `hoshi setup` means.
-//
-// `npm ci` is preferred whenever a lockfile exists: it installs exactly what is
-// locked and fails if package.json and the lockfile disagree. `npm install` may
-// quietly resolve a new version, and a build that changes its own inputs is not
-// a build.
 func EnsureDeps(ctx context.Context, c *config.Config, p *ui.Printer, r run.Runner, force bool) error {
-	dir := filepath.Join(c.Root, filepath.FromSlash(c.Npm.Dir))
-	if !exists(filepath.Join(dir, "package.json")) {
-		return fmt.Errorf("%s 沒有 package.json（npm.dir = %q）", relTo(c.Root, dir), c.Npm.Dir)
-	}
-
-	if !force {
-		switch c.Npm.Install {
-		case config.InstallNever:
-			p.Note("npm.install=never，跳過安裝相依")
-			return nil
-		case config.InstallAuto:
-			if exists(filepath.Join(dir, "node_modules")) {
-				return nil
-			}
-		}
-	}
-
-	args := []string{"install"}
-	if exists(filepath.Join(dir, "package-lock.json")) {
-		args = []string{"ci"}
-	}
-	p.Step("npm %s", args[0])
-	p.Command(relTo(c.Root, dir), nil, "npm", args)
-	if err := r.Run(ctx, run.Cmd{Dir: dir, Name: "npm", Args: args}); err != nil {
-		return err
-	}
-	p.OK("node_modules 就緒")
-	return nil
+	return npmdeps.Ensure(ctx, c, p, r, force)
 }
 
 func path(dir, sub string) string {

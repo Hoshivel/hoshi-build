@@ -119,7 +119,23 @@ revision 的那一版把下限留在上一版，全部換完之後的下一版�
 | `web_dir` | `web` | `go-npm` 產物中的前端目錄名 |
 | `install` | `auto` | `auto`、`always`、`never` |
 
-安裝時有 lockfile 使用 `npm ci`，否則使用 `npm install`。
+安裝優先使用 `npm-shrinkwrap.json`，其次為 `package-lock.json`；有有效檔案時執行
+`npm ci`，兩者都沒有時執行 `npm install`。選定檔案讀取失敗時直接報錯。
+
+- `auto` 只在 `node_modules/.hoshi-install.json` 的版本化輸入記錄相符時重用；
+  既存目錄沒有記錄、記錄損壞或輸入改變都必須重新安裝。
+- 記錄涵蓋 `package.json`、選定 lockfile 的名稱與位元組、專案 `.npmrc`、Node.js
+  版本／ABI／平臺／架構、npm 版本、npm 回報的有效設定及安裝子行程繼承的環境。
+  設定與環境可能含憑證，只存合併後的 SHA256，不落盤或顯示原值。
+- 安裝前先刪除舊記錄；成功且前後輸入一致後才原子寫入新記錄。安裝期間輸入改變
+  必須失敗；無法讀取環境時仍沿原安裝入口執行，但不得建立重用記錄。
+- 無 lock 或 workspace 專案不得重用根目錄的輸入記錄。`npm install` 新增 lock 後，
+  下一次先以 `npm ci` 安裝成功才可重用；workspace 仍每次交 npm 檢查完整清單。
+- `always` 每次安裝，`never` 跳過安裝；`hoshi setup` 強制安裝，不受此設定限制。
+
+同一個 `npm.dir` 的安裝必須序列執行。輸入記錄不驗證 `node_modules` 的完整內容，
+也不涵蓋安裝腳本讀取的任意外部檔案；手改或懷疑安裝已損壞時用 `hoshi setup`
+或 `install: always` 重新安裝。
 
 ### `test`
 
