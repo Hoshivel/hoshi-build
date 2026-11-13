@@ -115,6 +115,55 @@ func TestDescriptorReportsTheProtocolsTheArtifactLinked(t *testing.T) {
 	}
 }
 
+// Two SDK majors may coexist in a module, but one artifact cannot describe
+// two implementations of the same slug. Exercise the actual dependency scan
+// and publication path rather than supplying a fabricated linked-package list.
+func TestBuildRefusesTwoLinkedImplementationsOfOneProtocol(t *testing.T) {
+	requireToolchain(t)
+	for _, version := range []int{1, 2} {
+		for _, serves := range []bool{false, true} {
+			t.Run(fmt.Sprintf("major-%d-serves-%t", version, serves), func(t *testing.T) {
+				yaml := fixtureConfig()
+				if !serves {
+					yaml = strings.Replace(yaml, "protocols:\n  provides:\n    - demo-store\n", "", 1)
+				}
+				files := protocolFixture(map[string]string{
+					"internal/called/called.go": fmt.Sprintf("package called\nconst Protocol = %d\nconst ProtocolName = \"demo-store\"\nconst ContractRevision = 7\n", version),
+				})
+				result, root, err := buildFixture(t, yaml, files)
+				if err == nil {
+					t.Fatalf("two linked implementations published a descriptor: %v", readDescriptor(t, result.Artifacts[0].Descriptor)["protocols"])
+				}
+				for _, want := range []string{"demo-store", "fixture/internal/served", "fixture/internal/called"} {
+					if !strings.Contains(err.Error(), want) {
+						t.Fatalf("refusal does not identify both linked implementations: %v", err)
+					}
+				}
+				published, globErr := filepath.Glob(filepath.Join(root, "dist", "*"+DescriptorSuffix))
+				if globErr != nil || len(published) != 0 {
+					t.Fatalf("ambiguous protocol descriptor was published: %v (%v)", published, globErr)
+				}
+			})
+		}
+	}
+}
+
+func TestUnlinkedProtocolMajorDoesNotChangeTheArtifact(t *testing.T) {
+	requireToolchain(t)
+	files := protocolFixture(map[string]string{
+		"internal/unlinked/v2/protocol.go": "package unlinked\nconst Protocol = 2\nconst ProtocolName = \"demo-store\"\nconst ContractRevision = 1\n",
+	})
+	result, _, err := buildFixture(t, fixtureConfig(), files)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := readDescriptor(t, result.Artifacts[0].Descriptor)["protocols"].(map[string]any)
+	provided := got["provides"].([]any)
+	if len(provided) != 1 || provided[0].(map[string]any)["version"] != float64(1) {
+		t.Fatalf("an unlinked SDK major changed the artifact: %v", got)
+	}
+}
+
 func protocolNames(t *testing.T, value any) []string {
 	t.Helper()
 	list, ok := value.([]any)
