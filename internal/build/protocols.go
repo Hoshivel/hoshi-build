@@ -282,9 +282,18 @@ func describeProtocols(cfg *config.Config, linked []protocolPackage) (*Descripto
 		Provides: []DescriptorProtocol{},
 		Requires: []DescriptorProtocol{},
 	}
-	seen := make(map[string]bool, len(linked))
+	seen := make(map[string]protocolPackage, len(linked))
 	for _, pkg := range linked {
-		seen[pkg.name] = true
+		// An artifact has one implementation per slug, even when both copies
+		// report equal metadata. Picking a major or deduplicating would hide
+		// which implementation the artifact actually calls.
+		if previous, duplicate := seen[pkg.name]; duplicate {
+			return nil, fmt.Errorf(
+				"同一產物的協定 %q 有兩份實作：%s（major %d）與 %s（major %d）；"+
+					"描述子每個 slug 只能由一份實際連入的實作提供，不能挑版本或去重",
+				pkg.name, previous.importPath, previous.version, pkg.importPath, pkg.version)
+		}
+		seen[pkg.name] = pkg
 		entry := DescriptorProtocol{
 			Protocol:         pkg.name,
 			Version:          pkg.version,
@@ -304,7 +313,7 @@ func describeProtocols(cfg *config.Config, linked []protocolPackage) (*Descripto
 
 	var missing []string
 	for _, name := range cfg.Protocols.Provides {
-		if !seen[name] {
+		if _, linked := seen[name]; !linked {
 			missing = append(missing, name)
 		}
 	}
