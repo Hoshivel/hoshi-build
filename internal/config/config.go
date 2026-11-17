@@ -429,17 +429,17 @@ func (c *Config) validate() error {
 		{"npm.dir", c.Npm.Dir},
 		{"npm.output", c.Npm.Output},
 	} {
-		if err := checkRelPath(spec.key, spec.value); err != nil {
+		if err := CheckRelPath(spec.key, spec.value); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	for _, inc := range c.Include {
-		if err := checkRelPath("include", inc); err != nil {
+		if err := CheckRelPath("include", inc); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	for _, extra := range c.Clean.Extra {
-		if err := checkRelPath("clean.extra", extra); err != nil {
+		if err := CheckRelPath("clean.extra", extra); err != nil {
 			errs = append(errs, err)
 		}
 	}
@@ -478,7 +478,7 @@ func (c *Config) validateSteps() []error {
 		if len(cmd.Run) == 0 {
 			errs = append(errs, fmt.Errorf("`%s` 少了 `run`", where))
 		}
-		if err := checkRelPath(where+".dir", cmd.Dir); err != nil {
+		if err := CheckRelPath(where+".dir", cmd.Dir); err != nil {
 			errs = append(errs, err)
 		}
 		for _, kv := range cmd.Env {
@@ -509,7 +509,7 @@ func (c *Config) validateSteps() []error {
 		if len(proc.Run) == 0 {
 			errs = append(errs, fmt.Errorf("`%s` 少了 `run`", where))
 		}
-		if err := checkRelPath(where+".dir", proc.Dir); err != nil {
+		if err := CheckRelPath(where+".dir", proc.Dir); err != nil {
 			errs = append(errs, err)
 		}
 		// Names prefix every output line, so duplicates make the log unreadable
@@ -557,9 +557,9 @@ func LoopbackPort(rawURL string) int {
 	return port
 }
 
-// checkRelPath keeps configured paths inside the repository. `clean` removes
-// what they point at, so a path that escapes the repo is not a style question.
-func checkRelPath(key, value string) error {
+// CheckRelPath checks a repository-relative path without resolving or rewriting
+// it. Configured paths and command overrides must obey the same input contract.
+func CheckRelPath(key, value string) error {
 	if value == "" {
 		return nil
 	}
