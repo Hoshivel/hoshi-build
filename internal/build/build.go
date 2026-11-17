@@ -71,6 +71,21 @@ type builder struct {
 // Run executes a build.
 func Run(ctx context.Context, cfg *config.Config, p *ui.Printer, r run.Runner, opts Options) (*Result, error) {
 	b := &builder{cfg: cfg, ui: p, runner: r, opts: opts}
+	// Reject invalid overrides before toolchain resolution, cleaning or output
+	// creation. Joining first can disguise foreign absolute paths on this host.
+	if opts.Output != "" {
+		if err := config.CheckRelPath("-output", opts.Output); err != nil {
+			return nil, fmt.Errorf("%w；請使用倉庫內相對路徑，例如 dist/release", err)
+		}
+	}
+	outRel := cfg.Output
+	if opts.Output != "" {
+		outRel = opts.Output
+	}
+	b.out = filepath.Join(cfg.Root, filepath.FromSlash(outRel))
+	if !withinRoot(cfg.Root, b.out) {
+		return nil, fmt.Errorf("輸出目錄 %q 在倉庫之外", outRel)
+	}
 	if cfg.BuildsGo() && !opts.SkipGo {
 		policy, err := toolchain.Release()
 		if err != nil {
@@ -89,15 +104,6 @@ func Run(ctx context.Context, cfg *config.Config, p *ui.Printer, r run.Runner, o
 		if err != nil {
 			return nil, err
 		}
-	}
-
-	outRel := cfg.Output
-	if opts.Output != "" {
-		outRel = opts.Output
-	}
-	b.out = filepath.Join(cfg.Root, filepath.FromSlash(outRel))
-	if !withinRoot(cfg.Root, b.out) {
-		return nil, fmt.Errorf("輸出目錄 %q 在倉庫之外", outRel)
 	}
 
 	targets, err := b.resolveTargets(ctx)

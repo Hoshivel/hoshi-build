@@ -2,9 +2,11 @@ package build
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -379,14 +381,92 @@ func TestMissingToolchainSaysWhatToInstall(t *testing.T) {
 }
 
 func TestOutputOverrideStaysInsideTheRepo(t *testing.T) {
-	root := testRepo(t, "name: x\ntype: go\ntargets:\n  - linux/amd64\n", nil)
-	c := loadRepo(t, root)
-
-	r := &fakeRunner{onRun: touchOutput}
-	_, err := Run(context.Background(), c, quietPrinter(), r, Options{Output: "../escaped"})
-	if err == nil || !strings.Contains(err.Error(), "倉庫之外") {
-		t.Fatalf("Run() error = %v，--output 不該能指到倉庫外面", err)
+	invalid := []string{
+		"../escaped", `..\escaped`, "nested/../../escaped", `nested\..\..\escaped`,
+		"/absolute", `\root-relative`, "C:/same-drive", `D:\other-drive`,
+		"C:drive-relative", `\\server\share\release`, "//server/share/release",
 	}
+	for _, output := range invalid {
+		for _, clean := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s/clean=%v", output, clean), func(t *testing.T) {
+				root := testRepo(t, "name: x\ntype: go\ntargets:\n  - linux/amd64\n", map[string]string{
+					"dist/keep.txt": "existing output", "nested/keep.txt": "existing source",
+				})
+				c := loadRepo(t, root)
+				before := outputTestTree(t, root)
+				r := &fakeRunner{onRun: touchOutput}
+				_, err := Run(context.Background(), c, quietPrinter(), r, Options{Output: output, Clean: clean})
+				if err == nil || !strings.Contains(err.Error(), "-output") || !strings.Contains(err.Error(), "倉庫內相對路徑") {
+					t.Errorf("Run() error = %v, want an actionable -output relative-path refusal", err)
+				}
+				if len(r.calls) != 0 {
+					t.Errorf("invalid output reached external tools: %v", r.calls)
+				}
+				if after := outputTestTree(t, root); !reflect.DeepEqual(after, before) {
+					t.Errorf("invalid output changed the repository: before=%v after=%v", before, after)
+				}
+			})
+		}
+	}
+}
+
+func TestOutputOverrideAndConfiguredPathsResolveFromTheRepository(t *testing.T) {
+	for _, tc := range []struct{ name, configured, override, want string }{
+		{"default", "", "", "dist"},
+		{"configured", "configured-output", "", "configured-output"},
+		{"override", "configured-output", "dist/release", "dist/release"},
+		{"relative-parent-stays-inside", "", "dist/../release", "release"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := "name: x\ntype: go\ntargets:\n  - linux/amd64\n"
+			if tc.configured != "" {
+				body += "output: " + tc.configured + "\n"
+			}
+			root := testRepo(t, body, nil)
+			c := loadRepo(t, root)
+			r := &fakeRunner{onRun: touchOutput}
+			res, err := Run(context.Background(), c, quietPrinter(), r, Options{Output: tc.override})
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := filepath.Join(root, filepath.FromSlash(tc.want), "x-linux-amd64")
+			if len(res.Artifacts) != 1 || res.Artifacts[0].Path != want {
+				t.Fatalf("artifacts=%+v, want %s", res.Artifacts, want)
+			}
+			if _, err := os.Stat(want); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
+// outputTestTree includes directories so an accidentally created empty output
+// is observable as well as deletion or replacement of an existing file.
+func outputTestTree(t *testing.T, root string) map[string]string {
+	t.Helper()
+	tree := map[string]string{}
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() {
+			tree[rel] = "directory"
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		tree[rel] = string(data)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return tree
 }
 
 func TestVersionOverride(t *testing.T) {

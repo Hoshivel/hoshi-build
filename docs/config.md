@@ -35,6 +35,10 @@ output: dist/
 | `include` | list | 空 | 隨附檔案／目錄；`npm` 禁用 |
 | `protocols` | object | 空 | 這個服務提供、以及自己也呼叫哪些標準協定；`npm` 禁用，見〈`protocols`〉 |
 
+`hoshi build -output` 沿用 `output` 的倉庫內相對路徑契約，例如 `dist/release`；
+絕對路徑、磁碟代號路徑與越界路徑會在工具鏈解析或清理輸出前遭拒。
+`-C` 不改輸出基準，路徑仍相對於所載入設定檔的倉庫根目錄。
+
 ### `go`
 
 `npm` 型別禁用。
