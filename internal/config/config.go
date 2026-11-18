@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"net/url"
 	"path"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -40,13 +41,14 @@ const (
 // Config is a parsed .hoshi-build file: everything `hoshi` needs to build,
 // test, run and clean a repository.
 type Config struct {
-	Name    string   `yaml:"name"    json:"name"`
-	Type    string   `yaml:"type"    json:"type"`
-	Output  string   `yaml:"output"  json:"output"`
-	Version string   `yaml:"version" json:"version"`
-	Targets []Target `yaml:"targets" json:"targets"`
-	Archive string   `yaml:"archive" json:"archive"`
-	Include []string `yaml:"include" json:"include"`
+	Name           string   `yaml:"name"            json:"name"`
+	Type           string   `yaml:"type"            json:"type"`
+	Output         string   `yaml:"output"          json:"output"`
+	Version        string   `yaml:"version"         json:"version"`
+	Targets        []Target `yaml:"targets"         json:"targets"`
+	Archive        string   `yaml:"archive"         json:"archive"`
+	Include        []string `yaml:"include"         json:"include"`
+	IncludeExclude []string `yaml:"include_exclude" json:"include_exclude"`
 
 	Protocols ProtocolsConfig `yaml:"protocols" json:"protocols"`
 
@@ -241,6 +243,9 @@ func (c *Config) applyDefaults() {
 	}
 	if c.Archive == "" {
 		c.Archive = ArchiveNone
+	}
+	for i, exclusion := range c.IncludeExclude {
+		c.IncludeExclude[i] = cleanIncludeExclusion(exclusion)
 	}
 
 	if c.BuildsGo() {
@@ -438,6 +443,7 @@ func (c *Config) validate() error {
 			errs = append(errs, err)
 		}
 	}
+	errs = append(errs, c.validateIncludeExclusions()...)
 	for _, extra := range c.Clean.Extra {
 		if err := CheckRelPath("clean.extra", extra); err != nil {
 			errs = append(errs, err)
@@ -467,6 +473,54 @@ func (c *Config) validate() error {
 		return joinErrs(errs)
 	}
 	return nil
+}
+
+func cleanIncludeExclusion(value string) string {
+	return path.Clean(strings.ReplaceAll(value, `\`, "/"))
+}
+
+func strictDescendant(parent, child string) bool {
+	return parent == "." && child != "." || strings.HasPrefix(child, parent+"/")
+}
+
+func (c *Config) validateIncludeExclusions() []error {
+	if len(c.IncludeExclude) == 0 {
+		return nil
+	}
+	if !c.BuildsGo() {
+		return []error{fmt.Errorf("`type: %s` 不支援 `include_exclude`", c.Type)}
+	}
+	var errs []error
+	for i, raw := range c.IncludeExclude {
+		key := fmt.Sprintf("include_exclude[%d]", i)
+		if err := CheckRelPath(key, raw); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		exclusion := cleanIncludeExclusion(raw)
+		// Cleaning away a leading "./" or an earlier component can expose a
+		// Windows volume prefix that was not at the start of the input.
+		if err := CheckRelPath(key, exclusion); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		if exclusion == "." || strings.ContainsAny(raw, "*?[]{}\x00") {
+			errs = append(errs, fmt.Errorf("`%s` %q 必須是非空的相對字面路徑，不得使用通配字元", key, raw))
+			continue
+		}
+		covered := false
+		for _, inc := range c.Include {
+			included := filepath.ToSlash(filepath.Clean(filepath.FromSlash(inc)))
+			if included == exclusion || strictDescendant(exclusion, included) {
+				errs = append(errs, fmt.Errorf("`%s` %q 排除了 `include` 的 %q", key, raw, inc))
+			}
+			covered = covered || strictDescendant(included, exclusion)
+		}
+		if !covered {
+			errs = append(errs, fmt.Errorf("`%s` %q 必須在某個 `include` 下", key, raw))
+		}
+	}
+	return errs
 }
 
 // validateSteps checks the test commands and dev processes.
