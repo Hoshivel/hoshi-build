@@ -3,6 +3,7 @@ package build
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -24,6 +25,10 @@ func rel(root, p string) string {
 // whatever it points at — possibly a whole node_modules, possibly something
 // outside the repository — and no artifact in this organisation needs it.
 func copyTree(src, dst string) error {
+	return copyTreeExcluding(src, dst, nil)
+}
+
+func copyTreeExcluding(src, dst string, exclusions map[string]bool) error {
 	st, err := os.Lstat(src)
 	if err != nil {
 		return err
@@ -37,7 +42,7 @@ func copyTree(src, dst string) error {
 	case st.Mode()&os.ModeSymlink != 0:
 		return fmt.Errorf("%s 是符號連結，不複製", src)
 	case st.IsDir():
-		return copyDir(src, dst)
+		return copyDir(src, dst, exclusions)
 	case st.Mode().IsRegular():
 		if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 			return err
@@ -48,10 +53,20 @@ func copyTree(src, dst string) error {
 	}
 }
 
-func copyDir(src, dst string) error {
-	return filepath.Walk(src, func(p string, info os.FileInfo, err error) error {
+func copyDir(src, dst string, exclusions map[string]bool) error {
+	return filepath.WalkDir(src, func(p string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s 是符號連結，不複製", p)
+		}
+		if exclusions[p] {
+			if entry.IsDir() {
+				// WalkDir calls us before opening the directory.
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		rest, err := filepath.Rel(src, p)
 		if err != nil {
@@ -59,16 +74,19 @@ func copyDir(src, dst string) error {
 		}
 		target := filepath.Join(dst, rest)
 
-		switch {
-		case info.Mode()&os.ModeSymlink != 0:
-			return fmt.Errorf("%s 是符號連結，不複製", p)
-		case info.IsDir():
+		if entry.IsDir() {
 			return os.MkdirAll(target, 0o755)
-		case info.Mode().IsRegular():
-			return copyFile(p, target, info.Mode())
-		default:
-			return fmt.Errorf("%s 不是普通檔案或目錄", p)
 		}
+		if entry.Type().IsRegular() {
+			info, err := entry.Info()
+			if err != nil {
+				return err
+			}
+			if info.Mode().IsRegular() {
+				return copyFile(p, target, info.Mode())
+			}
+		}
+		return fmt.Errorf("%s 不是普通檔案或目錄", p)
 	})
 }
 

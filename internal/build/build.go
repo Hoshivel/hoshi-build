@@ -275,6 +275,10 @@ func (b *builder) assemble(stage string, npmRan bool) error {
 		}
 	}
 
+	exclusions := make(map[string]bool, len(b.cfg.IncludeExclude))
+	for _, exclusion := range b.cfg.IncludeExclude {
+		exclusions[filepath.Join(b.cfg.Root, filepath.FromSlash(exclusion))] = true
+	}
 	for _, inc := range b.cfg.Include {
 		src := filepath.Join(b.cfg.Root, filepath.FromSlash(inc))
 		if !withinRoot(b.cfg.Root, src) {
@@ -286,7 +290,7 @@ func (b *builder) assemble(stage string, npmRan bool) error {
 			// would notice.
 			return fmt.Errorf("include %q 不存在", inc)
 		}
-		if err := copyTree(src, filepath.Join(stage, filepath.Base(inc))); err != nil {
+		if err := copyTreeExcluding(src, filepath.Join(stage, filepath.Base(inc)), exclusions); err != nil {
 			return fmt.Errorf("複製 %s 失敗：%w", inc, err)
 		}
 	}

@@ -33,11 +33,24 @@ output: dist/
 | `targets` | list | 本機 | `os/arch`；`npm` 禁用 |
 | `archive` | string | `none` | `none`、`zip`、`tar.gz` |
 | `include` | list | 空 | 隨附檔案／目錄；`npm` 禁用 |
+| `include_exclude` | list | 空 | 從隨附內容排除的倉庫相對路徑，僅用於 `go`、`go-npm` |
 | `protocols` | object | 空 | 這個服務提供、以及自己也呼叫哪些標準協定；`npm` 禁用，見〈`protocols`〉 |
 
 `hoshi build -output` 沿用 `output` 的倉庫內相對路徑契約，例如 `dist/release`；
 絕對路徑、磁碟代號路徑與越界路徑會在工具鏈解析或清理輸出前遭拒。
 `-C` 不改輸出基準，路徑仍相對於所載入設定檔的倉庫根目錄。
+
+每個 `include` 項目保留末段名稱及目錄結構。`include_exclude` 依倉庫根下的完整路徑
+段落比對，會排除單一檔案或整個目錄。排除路徑可以不存在，需在某個 `include` 之下，
+且不能同時列入排除路徑本身或其子路徑。工具會拒絕絕對路徑、越界路徑與通配字元。
+此設定只影響 `include` 的複製。前端仍由 `npm` 設定決定內容。
+
+```yaml
+include: [story/]
+include_exclude:
+  - story/drafts
+  - story/proposals
+```
 
 ### `go`
 

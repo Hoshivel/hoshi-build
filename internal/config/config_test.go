@@ -127,6 +127,58 @@ func TestIncludeForcesDirectoryArtifact(t *testing.T) {
 	}
 }
 
+func TestIncludeExclusionsMustStayWithinIncludedTrees(t *testing.T) {
+	tests := []struct {
+		name, fields, badKey string
+	}{
+		{"no include", "type: go\ninclude_exclude: [story/drafts]\n", "include_exclude[0]"},
+		{"npm is unsupported", "type: npm\ninclude_exclude: [story/drafts]\n", "include_exclude"},
+		{"exclude include itself", "type: go\ninclude: [story/]\ninclude_exclude: [./story/]\n", "include_exclude[0]"},
+		{"exclude an ancestor", "type: go\ninclude: [story/drafts]\ninclude_exclude: [story]\n", "include_exclude[0]"},
+		{"also included descendant", "type: go\ninclude: [story, ./story/drafts/notes]\ninclude_exclude: [story/drafts]\n", "include_exclude[0]"},
+		{"also included file", "type: go\ninclude: [story, ./story/drafts/one.md]\ninclude_exclude: [story/drafts/one.md]\n", "include_exclude[0]"},
+		{"shared prefix", "type: go\ninclude: [story]\ninclude_exclude: [story-drafts/notes]\n", "include_exclude[0]"},
+		{"empty path", "type: go\ninclude: [story]\ninclude_exclude: ['']\n", "include_exclude[0]"},
+		{"absolute Unix path", "type: go\ninclude: [story]\ninclude_exclude: [/story/drafts]\n", "include_exclude[0]"},
+		{"absolute Windows path", "type: go\ninclude: [story]\ninclude_exclude: ['C:\\story\\drafts']\n", "include_exclude[0]"},
+		{"cleaned Windows volume path", "type: go\ninclude: [.]\ninclude_exclude: ['./C:/drafts']\n", "include_exclude[0]"},
+		{"escape", "type: go\ninclude: [story]\ninclude_exclude: [story/../../drafts]\n", "include_exclude[0]"},
+		{"glob", "type: go\ninclude: [story]\ninclude_exclude: ['story/**/drafts']\n", "include_exclude[0]"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := load(t, ".hoshi-build.yaml", "name: srv\n"+tc.fields)
+			if err == nil || !strings.Contains(err.Error(), tc.badKey) {
+				t.Fatalf("Load() error = %v, want an error naming %s", err, tc.badKey)
+			}
+		})
+	}
+}
+
+func TestIncludeExclusionsMatchInJSONAndYAML(t *testing.T) {
+	yamlConfig := mustLoad(t, `
+name: srv
+type: go-npm
+include: [./story/]
+include_exclude: [./story/drafts/, 'story\proposals']
+`)
+	jsonConfig, err := load(t, ".hoshi-build.json", `{
+		"name": "srv",
+		"type": "go-npm",
+		"include": ["./story/"],
+		"include_exclude": ["story/drafts", "story//proposals"]
+	}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"story/drafts", "story/proposals"}
+	for _, c := range []*Config{yamlConfig, jsonConfig} {
+		if !reflect.DeepEqual(c.IncludeExclude, want) {
+			t.Fatalf("include_exclude = %v, want %v", c.IncludeExclude, want)
+		}
+	}
+}
+
 // A typo in a key is the failure this rejection exists for: treated as
 // "unset", it puts artifacts somewhere else and says nothing.
 func TestUnknownKeysAreRejected(t *testing.T) {
