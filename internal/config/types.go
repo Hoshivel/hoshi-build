@@ -75,12 +75,20 @@ type CmdLine []string
 func (c *CmdLine) UnmarshalYAML(node *yaml.Node) error {
 	switch node.Kind {
 	case yaml.SequenceNode:
+		for _, item := range node.Content {
+			if item.ShortTag() != "!!str" || item.Kind != yaml.ScalarNode {
+				return fmt.Errorf("`run` 的清單項目必須是字串")
+			}
+		}
 		var list []string
 		if err := node.Decode(&list); err != nil {
 			return fmt.Errorf("`run` 的清單項目必須是字串")
 		}
 		return c.set(list)
 	case yaml.ScalarNode:
+		if node.ShortTag() != "!!str" {
+			return fmt.Errorf("`run` 必須是字串或清單")
+		}
 		var s string
 		if err := node.Decode(&s); err != nil {
 			return fmt.Errorf("`run` 必須是字串或清單")
@@ -96,8 +104,17 @@ func (c *CmdLine) UnmarshalYAML(node *yaml.Node) error {
 }
 
 func (c *CmdLine) UnmarshalJSON(data []byte) error {
-	var list []string
-	if err := json.Unmarshal(data, &list); err == nil {
+	var items []json.RawMessage
+	if err := json.Unmarshal(data, &items); err == nil {
+		list := make([]string, len(items))
+		for i, item := range items {
+			if len(item) == 0 || item[0] != '"' {
+				return fmt.Errorf("`run` 的清單項目必須是字串")
+			}
+			if err := json.Unmarshal(item, &list[i]); err != nil {
+				return fmt.Errorf("`run` 的清單項目必須是字串")
+			}
+		}
 		return c.set(list)
 	}
 	var s string
@@ -112,16 +129,10 @@ func (c *CmdLine) UnmarshalJSON(data []byte) error {
 }
 
 func (c *CmdLine) set(fields []string) error {
-	out := make([]string, 0, len(fields))
-	for _, f := range fields {
-		if f != "" {
-			out = append(out, f)
-		}
-	}
-	if len(out) == 0 {
+	if len(fields) == 0 || strings.TrimSpace(fields[0]) == "" {
 		return fmt.Errorf("`run` 是空的")
 	}
-	*c = out
+	*c = append(CmdLine(nil), fields...)
 	return nil
 }
 

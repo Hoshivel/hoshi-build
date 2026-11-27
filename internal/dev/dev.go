@@ -50,11 +50,21 @@ func Run(ctx context.Context, c *config.Config, p *ui.Printer, opts Options) err
 	if len(procs) == 0 {
 		return errors.New("沒有可啟動的行程（dev.processes 是空的）")
 	}
+	return RunProcesses(ctx, c, p, procs, opts, "開發環境")
+}
+
+// RunProcesses shares foreground process ownership with explicitly selected tasks.
+// It does not infer processes, install dependencies, or run a build.
+func RunProcesses(ctx context.Context, c *config.Config, p *ui.Printer, procs []config.Process, opts Options, title string) error {
+	if len(procs) == 0 {
+		return errors.New("沒有可啟動的行程")
+	}
+	procs = append([]config.Process(nil), procs...)
 	if len(opts.Args) > 0 {
 		procs[0].Run = append(append(config.CmdLine{}, procs[0].Run...), opts.Args...)
 	}
 
-	p.Title("開發環境")
+	p.Title("%s", title)
 	for _, proc := range procs {
 		where := proc.Dir
 		if where == "." {
@@ -135,7 +145,7 @@ func Run(ctx context.Context, c *config.Config, p *ui.Printer, opts Options) err
 		return first
 	}
 	p.Plain("")
-	p.OK("開發環境已停止")
+	p.OK("%s已停止", title)
 	return nil
 }
 

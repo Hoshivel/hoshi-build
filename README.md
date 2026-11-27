@@ -10,6 +10,8 @@ hoshi build -target linux/amd64,windows/amd64
 hoshi test
 hoshi dev
 hoshi dev -open
+hoshi run
+hoshi run server
 ```
 
 最短設定：
@@ -29,6 +31,8 @@ output: dist/
 | `hoshi build` | 建置產物；預設子指令 |
 | `hoshi test` | format、vet、build、test、前端 script 與自訂驗證 |
 | `hoshi dev` | 在前景同時執行開發行程 |
+| `hoshi run [名稱]` | 列出或單獨執行 `commands` 中的額外命令 |
+| `hoshi env path` | 檢查 Windows 使用者 PATH；`add` 加入、`remove` 移除本執行檔目錄 |
 | `hoshi fmt` | 執行 `gofmt -w`；`-check` 只檢查 |
 | `hoshi clean` | 刪除產物；`-deps` 含相依，`-all` 全清 |
 | `hoshi setup` | `go mod download`／`npm ci` |
@@ -80,6 +84,72 @@ frontend │ vite ready in 412 ms
 ```
 
 ## 安裝
+
+### Windows：複製貼上安裝（PowerShell）
+
+適用 Windows x64，無需系統管理員或 Go。開啟 PowerShell，把下方整段複製貼上。
+它會從最新 release 下載，核對 SHA-256，直接安裝為
+`%LOCALAPPDATA%\Programs\hoshi\bin\hoshi.exe`，再由 hoshi 設定使用者 PATH。
+`env path` 需要包含此功能的新版本；發布舊版時會在替換現有安裝前停止。
+
+<!-- hoshi-windows-install:start -->
+```powershell
+& {
+  $ErrorActionPreference = 'Stop'
+  $bin = Join-Path $env:LOCALAPPDATA 'Programs\hoshi\bin'
+  $release = Invoke-RestMethod 'https://api.github.com/repos/Hoshivel/hoshi-build/releases/latest'
+  $asset = $release.assets | Where-Object name -eq 'hoshi-windows-amd64.exe'
+  $descriptor = $release.assets | Where-Object name -eq 'hoshi-windows-amd64.exe.release.json'
+  if (!$asset -or !$descriptor) { throw '此版本沒有 Windows x64 安裝檔或完整性描述子。' }
+  New-Item -ItemType Directory -Force -Path $bin | Out-Null
+  $exe = Join-Path $bin 'hoshi.exe'
+  $download = Join-Path $bin ('hoshi-download-' + [guid]::NewGuid().ToString('N') + '.exe')
+  try {
+    Invoke-WebRequest -UseBasicParsing -Uri $asset.browser_download_url -OutFile $download
+    $sha = [string](Invoke-RestMethod $descriptor.browser_download_url).artifact.sha256
+    if ($sha -notmatch '^[0-9a-fA-F]{64}$' -or (Get-FileHash -Algorithm SHA256 -LiteralPath $download).Hash -ine $sha) {
+      throw '下載內容的 SHA-256 不符，現有安裝未替換。'
+    }
+    try { & $download env path --help *> $null } catch { throw '請先使用支援 env path 的新版 hoshi。' }
+    if ($LASTEXITCODE -ne 0) { throw '請先使用支援 env path 的新版 hoshi。' }
+    if (Test-Path -LiteralPath $exe) { [IO.File]::Replace($download, $exe, [NullString]::Value) }
+    else { [IO.File]::Move($download, $exe) }
+    & $exe env path add
+    if ($LASTEXITCODE -ne 0) { throw 'hoshi 已下載；使用者 PATH 設定失敗，請按上方訊息處理。' }
+    if (($env:Path -split ';') -notcontains $bin) { $env:Path = $bin + ';' + $env:Path }
+    hoshi version
+  } finally {
+    if (Test-Path -LiteralPath $download) { Remove-Item -LiteralPath $download -Force }
+  }
+}
+```
+<!-- hoshi-windows-install:end -->
+
+下載時的 `-OutFile` 已指定名稱，不必手動改名。重新執行同一段即可更新；下載或雜湊核對
+失敗時保留舊安裝，替換時若檔案正在使用會報錯，先結束正在執行的 hoshi 再重試。
+
+這段同時更新目前 PowerShell 的 PATH，所以結尾可直接執行 `hoshi version`。
+其他已開啟的終端不會繼承子行程的環境；請完全關閉終端程式後重新開啟。
+若版本與剛安裝的不同，用 `Get-Command hoshi -All` 檢查是否還有其他安裝路徑。
+
+已自行下載到固定目錄時，也可直接使用原生環境命令，不需要專案設定檔：
+
+```powershell
+$exe = "$env:LOCALAPPDATA\Programs\hoshi\bin\hoshi.exe"
+& $exe env path add
+& $exe env path status
+```
+
+它只管理目前使用者的 PATH，保留其他項目及原登錄型別；`remove` 只移除本執行檔所在
+目錄，不刪除檔案。新增加的目錄不會改動既有項目的排序。
+
+需要移除此安裝目錄的 PATH 項目時，才執行：
+
+```powershell
+& "$env:LOCALAPPDATA\Programs\hoshi\bin\hoshi.exe" env path remove
+```
+
+### Linux x64
 
 下載 release 單檔：
 

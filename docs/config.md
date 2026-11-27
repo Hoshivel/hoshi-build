@@ -35,6 +35,7 @@ output: dist/
 | `include` | list | 空 | 隨附檔案／目錄；`npm` 禁用 |
 | `include_exclude` | list | 空 | 從隨附內容排除的倉庫相對路徑，僅用於 `go`、`go-npm` |
 | `protocols` | object | 空 | 這個服務提供、以及自己也呼叫哪些標準協定；`npm` 禁用，見〈`protocols`〉 |
+| `commands` | map | 空 | 標準入口之外的具名命令，由 `hoshi run <名稱>` 單獨執行 |
 
 `hoshi build -output` 沿用 `output` 的倉庫內相對路徑契約，例如 `dist/release`；
 絕對路徑、磁碟代號路徑與越界路徑會在工具鏈解析或清理輸出前遭拒。
@@ -205,6 +206,41 @@ gofmt → vet → go build → go test → npm scripts → custom commands
 
 `dev.port` 與 `dev.open` 同時存在時埠必須一致。loopback 探測同時支援 IPv4 與 IPv6。
 
+### `commands`
+
+```yaml
+commands:
+  server:
+    description: 啟動獨立服務
+    run: [npm, run, server]
+    ports: [8080]
+  data:check:
+    run: go test ./data
+    dir: tools
+```
+
+| 鍵 | 預設 | 說明 |
+|---|---|---|
+| `description` | 空 | `hoshi run` 列表中的說明 |
+| `run` | 必填 | 命令字串或精確 argv 清單，沿用〈命令〉的引號規則 |
+| `dir` | `.` | 相對倉庫根目錄的工作目錄，不接受絕對或越界路徑 |
+| `env` | 空 | `KEY=value` 清單，只傳給子行程 |
+| `ports` | 空 | 啟動前檢查的埠，範圍 1–65535 |
+
+名稱以英數字開頭，其餘可用英數字、`.`、`_`、`-`、`:`。命令不會自動加入 `dev`，
+也不會隱含執行 setup／build／test。執行時沿用前景輸出、Ctrl+C 與整棵行程樹收尾。
+
+```sh
+hoshi run                       # 只列出命令，不啟動任何行程
+hoshi run server
+hoshi run server -dry-run        # 選項可放在名稱前後
+hoshi run server -- --port 9090  # -- 後的 argv 原樣附加
+```
+
+`-C`、`-config`、`-v` 同樣適用；`-no-check` 可略過宣告埠的占用檢查。
+傳給子行程的參數須放在 `--` 後，避免把 hoshi 的選項誤當成服務參數。
+自訂命令不會覆寫 `hoshi build` 等標準入口，也不為任意命令的輸出產生發佈描述子。
+
 ### `clean`
 
 | 鍵 | 預設 | 說明 |
@@ -289,6 +325,8 @@ run: [go, run, ./cmd/server]
 ```yaml
 run: [sh, -c, "a && b"]
 ```
+
+argv 清單與引號中的空參數會保留，例如 `run: [program, "", value]`；第一項執行檔不可為空。
 
 自訂測試：
 

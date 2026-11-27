@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -52,11 +53,12 @@ type Config struct {
 
 	Protocols ProtocolsConfig `yaml:"protocols" json:"protocols"`
 
-	Go    GoConfig    `yaml:"go"    json:"go"`
-	Npm   NpmConfig   `yaml:"npm"   json:"npm"`
-	Test  TestConfig  `yaml:"test"  json:"test"`
-	Dev   DevConfig   `yaml:"dev"   json:"dev"`
-	Clean CleanConfig `yaml:"clean" json:"clean"`
+	Go       GoConfig                `yaml:"go"    json:"go"`
+	Npm      NpmConfig               `yaml:"npm"   json:"npm"`
+	Test     TestConfig              `yaml:"test"  json:"test"`
+	Dev      DevConfig               `yaml:"dev"   json:"dev"`
+	Clean    CleanConfig             `yaml:"clean" json:"clean"`
+	Commands map[string]NamedCommand `yaml:"commands" json:"commands"`
 
 	// Where this came from. Not settable from the file.
 	Path string `yaml:"-" json:"-"` // absolute path of the config file
@@ -164,6 +166,25 @@ type Command struct {
 	Env  []string `yaml:"env"  json:"env"`
 }
 
+// NamedCommand is an explicit extra task, separate from the dev process group.
+type NamedCommand struct {
+	Description string   `yaml:"description" json:"description"`
+	Dir         string   `yaml:"dir" json:"dir"`
+	Run         CmdLine  `yaml:"run" json:"run"`
+	Env         []string `yaml:"env" json:"env"`
+	Ports       []int    `yaml:"ports" json:"ports"`
+}
+
+// CommandNames returns configured names in deterministic display/validation order.
+func (c *Config) CommandNames() []string {
+	names := make([]string, 0, len(c.Commands))
+	for name := range c.Commands {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 // Process is one long-running program for `hoshi dev`.
 type Process struct {
 	Name  string   `yaml:"name"  json:"name"`
@@ -234,6 +255,7 @@ func (t TestConfig) RaceEnabled() bool { return t.Race == nil || *t.Race }
 
 // nameRe keeps `name` usable as a filename on every platform we target.
 var nameRe = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+var commandNameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]*$`)
 
 // applyDefaults fills every optional key. It runs after validation, so error
 // messages point at the real problem rather than at a filled-in default.
@@ -302,6 +324,12 @@ func (c *Config) applyDefaults() {
 		}
 		if c.Dev.Processes[i].Dir == "" {
 			c.Dev.Processes[i].Dir = "."
+		}
+	}
+	for name, command := range c.Commands {
+		if command.Dir == "" {
+			command.Dir = "."
+			c.Commands[name] = command
 		}
 	}
 }
@@ -526,6 +554,30 @@ func (c *Config) validateIncludeExclusions() []error {
 // validateSteps checks the test commands and dev processes.
 func (c *Config) validateSteps() []error {
 	var errs []error
+	for _, name := range c.CommandNames() {
+		command := c.Commands[name]
+		where := "commands." + name
+		if !commandNameRe.MatchString(name) {
+			errs = append(errs, fmt.Errorf("`commands` 的名稱 %q 必須以英數字開頭，且只含英數字、點、底線、連字號或冒號", name))
+		}
+		if len(command.Run) == 0 {
+			errs = append(errs, fmt.Errorf("`%s` 少了 `run`", where))
+		}
+		if err := CheckRelPath(where+".dir", command.Dir); err != nil {
+			errs = append(errs, err)
+		}
+		for _, kv := range command.Env {
+			key, _, ok := strings.Cut(kv, "=")
+			if !ok || key == "" {
+				errs = append(errs, fmt.Errorf("`%s.env` 的 %q 不是 `KEY=value`", where, kv))
+			}
+		}
+		for _, port := range command.Ports {
+			if port < 1 || port > 65535 {
+				errs = append(errs, fmt.Errorf("`%s.ports` 的 %d 不是合法的埠", where, port))
+			}
+		}
+	}
 
 	for i, cmd := range c.Test.Commands {
 		where := fmt.Sprintf("test.commands[%d]", i)
