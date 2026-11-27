@@ -221,6 +221,88 @@ func cmdDev(ctx context.Context, args []string) error {
 	return dev.Run(ctx, cfg, p, opts)
 }
 
+func cmdRun(ctx context.Context, args []string) error {
+	var common commonFlags
+	var opts dev.Options
+	fs := newFlagSet("run")
+	common.bind(fs)
+	fs.BoolVar(&opts.DryRun, "dry-run", false, "只印出命令，不啟動行程")
+	fs.BoolVar(&opts.NoCheck, "no-check", false, "不檢查命令宣告的埠")
+	name, forwarded, err := parseRunFlags(fs, args)
+	if err != nil {
+		if err == flag.ErrHelp {
+			return nil
+		}
+		return err
+	}
+	cfg, p, err := common.load()
+	if err != nil {
+		return err
+	}
+	if name == "" {
+		names := cfg.CommandNames()
+		if len(names) == 0 {
+			p.Note("沒有自訂命令；在設定檔的 commands 宣告額外入口")
+			return nil
+		}
+		p.Title("自訂命令")
+		for _, name := range names {
+			command := cfg.Commands[name]
+			if command.Description == "" {
+				p.Note("%s：%s", name, command.Run)
+			} else {
+				p.Note("%s：%s", name, command.Description)
+			}
+		}
+		return nil
+	}
+	opts.Args = forwarded
+	return tasks.RunCommand(ctx, cfg, p, name, opts)
+}
+
+// parseRunFlags accepts hoshi options on either side of the command name. Only
+// the explicit -- boundary forwards arguments, so `server -dry-run` cannot
+// accidentally start a server whose own parser ignores that flag.
+func parseRunFlags(fs *flag.FlagSet, args []string) (name string, forwarded []string, err error) {
+	var flags, names []string
+	for i := 0; i < len(args); i++ {
+		token := args[i]
+		if token == "--" {
+			forwarded = args[i+1:]
+			break
+		}
+		if token != "-" && strings.HasPrefix(token, "-") {
+			flags = append(flags, token)
+			key, _, hasValue := strings.Cut(strings.TrimLeft(token, "-"), "=")
+			if option := fs.Lookup(key); option != nil && !hasValue {
+				boolean, isBool := option.Value.(interface{ IsBoolFlag() bool })
+				if (!isBool || !boolean.IsBoolFlag()) && i+1 < len(args) {
+					i++
+					flags = append(flags, args[i])
+				}
+			}
+		} else {
+			names = append(names, token)
+		}
+	}
+	if parseErr := fs.Parse(flags); parseErr != nil {
+		if parseErr == flag.ErrHelp {
+			return "", nil, parseErr
+		}
+		return "", nil, errAlreadyReported
+	}
+	if len(names) > 1 {
+		return "", nil, fmt.Errorf("一次只能指定一個自訂命令；附加參數請放在 -- 後面")
+	}
+	if len(names) == 0 && len(forwarded) > 0 {
+		return "", nil, fmt.Errorf("請在 -- 前指定自訂命令名稱")
+	}
+	if len(names) == 1 {
+		name = names[0]
+	}
+	return name, forwarded, nil
+}
+
 func cmdFmt(ctx context.Context, args []string) error {
 	var (
 		common commonFlags

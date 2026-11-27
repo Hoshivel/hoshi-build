@@ -68,6 +68,8 @@ const usage = `hoshi —— Hoshivel 開發工具
   hoshi build [選項]     依 .hoshi-build.yaml 建置（預設子指令）
   hoshi test  [選項]     驗證：gofmt / vet / build / test，前端跑設定的 scripts
   hoshi dev   [選項]     啟動開發環境（前後端一起跑，Ctrl+C 一次全停）
+  hoshi run [選項] [名稱] [-- 參數...]  列出或執行自訂命令
+  hoshi env path [status|add|remove]  管理 Windows 使用者 PATH
   hoshi fmt   [-check]   gofmt -w（-check 只回報不改）
   hoshi clean [選項]     刪除產物（-deps 連 node_modules、-all 全清）
   hoshi setup            安裝相依（go mod download / npm ci）
@@ -103,6 +105,12 @@ dev：
   -args "<字串>"     附加參數給第一個行程
   -no-check          不檢查埠是否被占用
   -dry-run           只印出要跑什麼
+
+run：
+  不給名稱時列出 commands；只執行指定命令，不啟動 dev 群組
+  -dry-run           只印出命令，不啟動行程
+  -no-check          不檢查命令宣告的埠
+  -- 參數...         將參數原樣附加到命令
 
 設定檔的完整說明見 docs/config.md。
 `
@@ -142,6 +150,10 @@ func dispatch(args []string) error {
 		return cmdTest(ctx, args)
 	case "dev":
 		return cmdDev(ctx, args)
+	case "run":
+		return cmdRun(ctx, args)
+	case "env":
+		return cmdEnv(args)
 	case "fmt":
 		return cmdFmt(ctx, args)
 	case "clean":
