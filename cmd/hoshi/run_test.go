@@ -133,12 +133,16 @@ func TestNamedRunCLI(t *testing.T) {
 				found = true
 			}
 		}
-		// macOS exposes /var through /private/var in a child process's cwd.
-		wantDir, err := filepath.EvalSymlinks(filepath.Join(root, "tools"))
+		// macOS symlinks and Windows short names can spell the same cwd differently.
+		wantDir, err := os.Stat(filepath.Join(root, "tools"))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !found || got.Dir != wantDir || !reflect.DeepEqual(got.Args, append([]string{""}, extra...)) || got.Env != "space = value" {
+		gotDir, err := os.Stat(got.Dir)
+		if err != nil {
+			t.Fatalf("reported cwd %q: %v", got.Dir, err)
+		}
+		if !found || !os.SameFile(gotDir, wantDir) || !reflect.DeepEqual(got.Args, append([]string{""}, extra...)) || got.Env != "space = value" {
 			t.Fatalf("got=%+v output=%s", got, output)
 		}
 	})
