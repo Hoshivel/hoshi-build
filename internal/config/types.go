@@ -76,7 +76,12 @@ func (c *CmdLine) UnmarshalYAML(node *yaml.Node) error {
 	switch node.Kind {
 	case yaml.SequenceNode:
 		for _, item := range node.Content {
-			if item.ShortTag() != "!!str" || item.Kind != yaml.ScalarNode {
+			seen := make(map[*yaml.Node]bool)
+			for item != nil && item.Kind == yaml.AliasNode && !seen[item] {
+				seen[item] = true
+				item = item.Alias
+			}
+			if item == nil || item.ShortTag() != "!!str" || item.Kind != yaml.ScalarNode {
 				return fmt.Errorf("`run` 的清單項目必須是字串")
 			}
 		}

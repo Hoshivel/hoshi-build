@@ -133,7 +133,12 @@ func TestNamedRunCLI(t *testing.T) {
 				found = true
 			}
 		}
-		if !found || got.Dir != filepath.Join(root, "tools") || !reflect.DeepEqual(got.Args, append([]string{""}, extra...)) || got.Env != "space = value" {
+		// macOS exposes /var through /private/var in a child process's cwd.
+		wantDir, err := filepath.EvalSymlinks(filepath.Join(root, "tools"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !found || got.Dir != wantDir || !reflect.DeepEqual(got.Args, append([]string{""}, extra...)) || got.Env != "space = value" {
 			t.Fatalf("got=%+v output=%s", got, output)
 		}
 	})

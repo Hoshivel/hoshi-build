@@ -54,3 +54,16 @@ func TestCmdLineRejectsNonStringArguments(t *testing.T) {
 		})
 	}
 }
+
+func TestCmdLineYAMLStringAliases(t *testing.T) {
+	c, err := load(t, ".hoshi-build.yaml", "name: fixture\ntype: go\ncommands:\n  server:\n    run: [&word echo, *word]\n")
+	if err != nil || !reflect.DeepEqual(c.Commands["server"].Run, CmdLine{"echo", "echo"}) {
+		t.Fatalf("config=%+v error=%v", c, err)
+	}
+	for _, value := range []string{"42", "null"} {
+		_, err := load(t, ".hoshi-build.yaml", "name: fixture\ntype: go\ncommands:\n  server:\n    description: &word "+value+"\n    run: [echo, *word]\n")
+		if err == nil || !strings.Contains(err.Error(), "run") {
+			t.Fatalf("alias=%s error=%v", value, err)
+		}
+	}
+}
