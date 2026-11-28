@@ -45,7 +45,7 @@ func TestReleaseCompilerSelectionIsProcessLocalAndProven(t *testing.T) {
 
 func TestReleaseCompilerFailurePreservesExistingOutput(t *testing.T) {
 	root := testRepo(t, "name: fixture\ntype: go\noutput: dist/\ntargets: [linux/amd64]\n", map[string]string{"dist/keep": "existing artifact"})
-	r := &fakeRunner{onRun: touchOutput, captures: map[string]string{"go env GOVERSION": "go1.26.5"}}
+	r := &fakeRunner{onRun: touchOutput, captures: map[string]string{"go env GOVERSION": "go1.26.10"}}
 	if _, err := Run(context.Background(), loadRepo(t, root), quietPrinter(), r, Options{Clean: true}); err == nil {
 		t.Fatal("accepted the old host compiler")
 	}
@@ -57,7 +57,7 @@ func TestReleaseCompilerFailurePreservesExistingOutput(t *testing.T) {
 func TestReleaseRejectsArtifactBuiltByAnotherCompiler(t *testing.T) {
 	root := testRepo(t, "name: fixture\ntype: go\noutput: dist/\ntargets: [linux/amd64]\n", nil)
 	binary := filepath.Join(root, "dist", "fixture-linux-amd64")
-	r := &fakeRunner{onRun: touchOutput, captures: map[string]string{"go version -m " + binary: binary + ": go1.26.5"}}
+	r := &fakeRunner{onRun: touchOutput, captures: map[string]string{"go version -m " + binary: binary + ": go1.26.10"}}
 	if _, err := Run(context.Background(), loadRepo(t, root), quietPrinter(), r, Options{}); err == nil || !strings.Contains(err.Error(), "編譯器") {
 		t.Fatal("mismatched artifact compiler was not rejected", err)
 	}
@@ -79,14 +79,14 @@ func TestNpmBuildDoesNotResolveGoCompiler(t *testing.T) {
 }
 
 func TestSkippedBackendNeverRelabelsExistingCompiler(t *testing.T) {
-	old := `{"builder":{"go_version":"go1.26.5"}}`
+	old := `{"builder":{"go_version":"go1.26.10"}}`
 	root := testRepo(t, "name: fixture\ntype: go\noutput: dist/\ntargets: [linux/amd64]\n", map[string]string{
 		"dist/fixture-linux-amd64":              "old binary",
 		"dist/fixture-linux-amd64.release.json": old,
 	})
-	r := &fakeRunner{captures: map[string]string{"go env GOVERSION": "go1.26.10"}}
+	r := &fakeRunner{}
 	result, err := Run(context.Background(), loadRepo(t, root), quietPrinter(), r, Options{SkipGo: true})
-	if err != nil || len(result.Artifacts) != 0 || r.ran("go build") || r.ran("go version -m") {
+	if err != nil || len(result.Artifacts) != 0 || r.ran("go env GOVERSION") || r.ran("go build") || r.ran("go version -m") {
 		t.Fatal("skipped backend was treated as a new artifact", result, err)
 	}
 	if body, err := os.ReadFile(filepath.Join(root, "dist", "fixture-linux-amd64.release.json")); err != nil || string(body) != old {
